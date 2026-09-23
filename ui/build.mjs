@@ -19,7 +19,7 @@ await writeFile("viewer.html", `<!doctype html>
 html, body, #app { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: transparent; }
 body { font: 14px/1.5 system-ui, sans-serif; }
 #app { display: flex; align-items: center; justify-content: flex-start; padding-inline-start: 2.5em; }
-img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; object-position: left center; }
+img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; object-position: left center; border-radius: 8px; }
 p { margin: 0; padding: 8px; color: var(--color-text-secondary, #777); }
 [hidden] { display: none !important; }
 </style>

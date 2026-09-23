@@ -35,7 +35,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from yarl import URL
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-IMAGE_VIEWER_URI = "ui://image/viewer-v1"
+IMAGE_VIEWER_URI = "ui://image/viewer-v2"
 MAX_REQUEST_BYTES = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64 * 1024
 FORMATS = {"PNG": ("png", "image/png"), "JPEG": ("jpg", "image/jpeg"),
            "GIF": ("gif", "image/gif"), "WEBP": ("webp", "image/webp")}
