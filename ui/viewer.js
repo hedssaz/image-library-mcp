@@ -34,8 +34,8 @@ app.ontoolresult = (result) => {
   const maxHeight = Math.min(preferred, host?.maxHeight ?? host?.height ?? preferred);
   const scale = Math.min(1, maxWidth / data.width, maxHeight / data.height);
   const size = { width: Math.round(data.width * scale), height: Math.round(data.height * scale) };
-  image.style.width = `${size.width}px`;
-  image.style.height = `${size.height}px`;
+  image.style.maxWidth = `min(100%, ${size.width}px)`;
+  image.style.maxHeight = `min(100%, ${size.height}px)`;
   image.alt = data.name || "图片";
   image.src = data.url;
   if (CUSTOM_SIZE && !sizeNegotiated) {

@@ -159,12 +159,12 @@ async def test_mcp_app_resource_and_tool_result(tmp_path):
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         tool = tools["show_image"]
         assert set(tool.inputSchema["properties"]) == {"name"}
-        assert tool.meta["ui"]["resourceUri"] == "ui://image/viewer-v2"
+        assert tool.meta["ui"]["resourceUri"] == "ui://image/viewer-v4"
         assert tool.annotations.readOnlyHint and not tool.annotations.openWorldHint
         resources = (await client.list_resources()).resources
-        resource = next(item for item in resources if str(item.uri) == "ui://image/viewer-v2")
+        resource = next(item for item in resources if str(item.uri) == "ui://image/viewer-v4")
         assert resource.mimeType == "text/html;profile=mcp-app"
-        result = await client.read_resource("ui://image/viewer-v2")
+        result = await client.read_resource("ui://image/viewer-v4")
         content = result.contents[0]
         assert content.mimeType == "text/html;profile=mcp-app"
         assert content.meta["ui"]["csp"]["resourceDomains"] == [IMAGE_ORIGIN]
