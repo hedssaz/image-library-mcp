@@ -1,6 +1,8 @@
-# Image Library MCP
+# Image Library MCP · 表情包 MCP
 
-一个轻量的图片管理 MCP 服务。支持链接下载、Base64 上传、名称/别名搜索，以及在支持 MCP Apps 的客户端中直接显示图片。图片和元数据存入 SQLite。
+让 AI 在聊天中搜索、发送你自己的表情包。通过链接或 Base64 添加表情包，再用“开心”“无语”“吵架”等名字、别名或描述搜索；支持 MCP Apps 的客户端可以直接在聊天里展示选中的表情包。
+
+表情包原图和元数据保存在 SQLite 中，每张图都有可公开访问的外链。项目不附带图库，部署后按需添加自己的表情包。
 
 ## 选择运行方式
 
@@ -156,23 +158,25 @@ Authorization: Bearer <MCP_TOKEN>
 
 | 工具 | 用途 |
 | --- | --- |
-| `add(name, url 或 base64_data, aliases=[], description="")` | 添加图片；链接与 Base64 二选一 |
-| `search(query="", limit=20, offset=0)` | 按名称、别名和描述搜索；空查询列出图片 |
+| `add(name, url 或 base64_data, aliases=[], description="")` | 添加表情包；链接与 Base64 二选一 |
+| `search(query="", limit=20, offset=0)` | 按名称、别名和描述搜索表情包；空查询列出表情包 |
 | `get(name)` | 返回原图 ImageContent、外链及原始宽高 |
-| `show_image(name)` | 在支持 MCP Apps 的客户端中显示图片 |
-| `addalias(name, aliases)` | 为指定图片添加别名 |
-| `delete(name)` | 删除指定图片及其别名 |
+| `show_image(name)` | 在支持 MCP Apps 的客户端中直接展示表情包 |
+| `addalias(name, aliases)` | 为指定表情包添加别名，如“开心”“无语” |
+| `delete(name)` | 删除指定表情包及其别名 |
 
-例如调用 `add`：
+例如调用 `add` 添加一张表情包（将示例链接替换为实际图片链接）：
 
 ```json
 {
-  "name": "山间日出",
-  "url": "https://example.com/landscape.jpg",
-  "aliases": ["山景", "日出"],
-  "description": "户外摄影"
+  "name": "开心大笑",
+  "url": "https://example.com/happy.webp",
+  "aliases": ["开心", "哈哈", "笑死"],
+  "description": "表达开心、觉得好笑时使用"
 }
 ```
+
+添加后，可以在连接了这个 MCP 的客户端中说：“给我发一张开心的表情包。”工具流程是 `search(query="开心")` → `show_image(name="开心大笑")`。需要原图内容和外链时，使用 `get(name="开心大笑")`。
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词须全部命中。`limit` 为 1–100。其他工具使用准确图片名称。
 
@@ -180,7 +184,7 @@ Authorization: Bearer <MCP_TOKEN>
 
 删除后源站立即返回 404；浏览器或 CDN 已缓存的图片可能持续到缓存过期。图片响应默认缓存 24 小时，不主动清除 CDN 缓存。
 
-## 图片显示设置
+## 表情包显示设置
 
 在 `ui/viewer.js` 中调整：
 
@@ -191,7 +195,36 @@ const PREFERRED_IMAGE_SIZE = 150;
 
 - 开启时，按期望尺寸与宿主上限等比例缩小，小图不放大，只上报一次高度，不收窄 iframe 宽度。
 - 关闭时，不上报尺寸，图片默认上限为 300×300。
-- 左对齐和留白在 `ui/build.mjs` 中配置，默认留白 `2.5em`。建议左对齐与 `CUSTOM_SIZE` 一起开启。
+
+### 对齐方式与水平偏移
+
+在 `ui/build.mjs` 的 CSS 中修改 `#app` 和 `img` 的对应属性，保留其他样式。例如，左对齐并向右留出 16 像素：
+
+```css
+#app {
+  justify-content: flex-start;
+  padding-inline-start: 16px;
+}
+img {
+  object-position: left center;
+}
+```
+
+`padding-inline-start` 控制图片与卡片内部左边缘的距离：`0px` 不额外缩进，`8px` 向右留 8 像素，`16px` 留 16 像素。数值越大，图片越靠右。这里的 `px` 是 CSS 像素，手机截图中的物理像素数可能不同。
+
+当前默认值是 `2.5em`，按默认字号 14px 计算约为 35px；想精确调整距离，直接改成 `px`。要尽量与聊天正文的第一个字对齐，可先设为 `0px`；宿主在 iframe 外添加的边距仍由客户端决定。
+
+| 对齐方式 | `#app` 的 `justify-content` | `img` 的 `object-position` |
+| --- | --- | --- |
+| 左对齐 | `flex-start` | `left center` |
+| 居中 | `center` | `center center` |
+| 右对齐 | `flex-end` | `right center` |
+
+切换居中或右对齐时，先把 `padding-inline-start` 设为 `0px`。右对齐后若要与右边缘留出距离，可加 `padding-inline-end: 16px`。
+
+对齐和偏移不依赖 `CUSTOM_SIZE`，但建议左对齐时一起开启，让卡片高度随图片收紧。偏移只调整留白，不修改期望图片尺寸，也不会增加尺寸回传次数。
+
+### 让修改生效
 
 修改 UI 后，用 Node.js 20+ 重新构建，再重新部署：
 
@@ -200,7 +233,7 @@ npm ci
 npm run build
 ```
 
-已附带构建好的 `viewer.html`，直接部署不需要 Node.js。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 版本，并在客户端刷新工具，避免旧模板缓存。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
+`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，直接部署不需要 Node.js。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 版本，并在客户端刷新工具，避免旧模板缓存。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
 
 ## 运行测试
 
