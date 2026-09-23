@@ -180,7 +180,7 @@ Authorization: Bearer <MCP_TOKEN>
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词须全部命中。`limit` 为 1–100。其他工具使用准确图片名称。
 
-支持 PNG、JPEG、GIF、WebP，保留原始文件，单图最大 10 MiB。下载仅允许公网 HTTP(S)。所有工具均声明 `outputSchema`，Base64 图片只放入 `ImageContent`。
+支持 PNG、JPEG、GIF、WebP，保留原始文件，单图最大 10 MiB。所有工具均声明 `outputSchema`，Base64 图片只放入 `ImageContent`。
 
 删除后源站立即返回 404；浏览器或 CDN 已缓存的图片可能持续到缓存过期。图片响应默认缓存 24 小时，不主动清除 CDN 缓存。
 

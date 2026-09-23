@@ -5,10 +5,8 @@ import base64
 import binascii
 import hmac
 import io
-import ipaddress
 import json
 import os
-import socket
 import sqlite3
 import unicodedata
 import uuid
@@ -20,8 +18,6 @@ from typing import Annotated, Any
 
 import aiohttp
 import uvicorn
-from aiohttp.abc import ResolveResult
-from aiohttp.resolver import ThreadedResolver
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
@@ -126,42 +122,10 @@ def decode_image(value: str) -> bytes:
         raise ValueError("Base64 格式无效。") from exc
 
 
-def require_public_ip(host: str) -> None:
-    address = ipaddress.ip_address(host)
-    if not address.is_global or address.is_multicast or "%" in host:
-        raise ValueError("只允许下载公网图片，不能访问内网、本机或保留地址。")
-    if isinstance(address, ipaddress.IPv6Address):
-        # Transition addresses can carry an IPv4 destination; do not allow tunnels.
-        if address.ipv4_mapped:
-            require_public_ip(str(address.ipv4_mapped))
-        if (
-            address.sixtofour
-            or address.teredo
-            or address in ipaddress.ip_network("64:ff9b::/96")
-        ):
-            raise ValueError("不支持 IPv6 转换或隧道地址。")
-
-
-class PublicResolver(ThreadedResolver):
-    async def resolve(self, host: str, port: int = 0,
-                      family: socket.AddressFamily = socket.AF_INET) -> list[ResolveResult]:
-        addresses = await super().resolve(host, port, family)
-        for address in addresses:
-            require_public_ip(address["host"])
-        # The connector uses these same validated addresses to open its socket.
-        return addresses
-
-
 def download_url(value: str) -> URL:
     url = URL(value)
-    if url.scheme not in {"http", "https"} or not url.host or url.user is not None:
-        raise ValueError("图片链接必须是无用户名、密码的 HTTP(S) 公网 URL。")
-    try:
-        ipaddress.ip_address(url.host)
-    except ValueError:
-        pass  # Hostnames are checked by PublicResolver at connection time.
-    else:
-        require_public_ip(url.host)
+    if url.scheme not in {"http", "https"} or not url.host:
+        raise ValueError("图片链接必须是 HTTP(S) URL。")
     return url
 
 
@@ -175,10 +139,8 @@ async def download_image(value: str) -> bytes:
 
 
 async def _download_image(value: str) -> bytes:
-    connector = aiohttp.TCPConnector(resolver=PublicResolver())
     async with aiohttp.ClientSession(
-        connector=connector, trust_env=False, cookie_jar=aiohttp.DummyCookieJar(),
-        timeout=aiohttp.ClientTimeout(total=30, sock_connect=10),
+        timeout=aiohttp.ClientTimeout(total=30),
         headers={"User-Agent": "image-mcp/1.0", "Accept": "image/*"},
     ) as session:
         url = download_url(value)

@@ -1,7 +1,7 @@
+import asyncio
 import base64
 import io
 import json
-import socket
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
@@ -272,28 +272,42 @@ async def test_auth_host_origin_and_body_limits(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("url", [
-    "file:///etc/passwd", "ftp://example.com/x", "http://127.0.0.1/x", "http://10.0.0.1/x",
-    "http://169.254.169.254/x", "http://[::1]/x", "http://[::ffff:127.0.0.1]/x",
-    "http://[64:ff9b::7f00:1]/x", "http://224.0.0.1/x", "https://user:pass@example.com/x",
+    "file:///etc/passwd", "ftp://example.com/x", "data:image/png;base64,AA==", "http:///x",
 ])
-def test_unsafe_download_urls(url):
+def test_download_requires_http_url(url):
     with pytest.raises(ValueError):
         server.download_url(url)
 
 
-@pytest.mark.asyncio
-async def test_dns_addresses_checked_before_connect(monkeypatch):
-    async def resolve(self, host, port=0, family=socket.AF_INET):
-        return [{"host": "8.8.8.8"}, {"host": "192.168.1.1"}]
+@pytest.mark.parametrize("url", [
+    "https://user:pass@example.com/x", "http://localhost/x", "http://127.0.0.1/x",
+    "http://192.168.1.1/x", "http://[::1]/x", "http://[64:ff9b::808:808]/x",
+])
+def test_no_extra_download_url_restrictions(url):
+    assert str(server.download_url(url)) == url
 
-    monkeypatch.setattr(server.ThreadedResolver, "resolve", resolve)
-    resolver = server.PublicResolver()
-    with pytest.raises(ValueError, match="公网"):
-        await resolver.resolve("images.example.test")
-    await resolver.close()
-    # aiohttp rejects legacy numeric IP spellings before opening a socket.
-    with pytest.raises(ValueError):
-        await server.download_image("http://2130706433/image.png")
+
+@pytest.mark.asyncio
+async def test_download_total_timeout(monkeypatch):
+    wait_for = asyncio.wait_for
+    cancelled = False
+
+    async def slow_download(value):
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled = True
+
+    async def short_wait(awaitable, timeout):
+        assert timeout == 30
+        return await wait_for(awaitable, 0.01)
+
+    monkeypatch.setattr(server, "_download_image", slow_download)
+    monkeypatch.setattr(server.asyncio, "wait_for", short_wait)
+    with pytest.raises(ValueError, match="下载超时"):
+        await server.download_image("https://example.com/image")
+    assert cancelled
 
 
 class DownloadResponse:
@@ -318,13 +332,13 @@ class DownloadResponse:
 def fake_download(monkeypatch, responses, requested):
     class Session:
         def __init__(self, **kwargs):
-            self.connector = kwargs["connector"]
+            pass
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *args):
-            await self.connector.close()
+            pass
 
         def get(self, url, **kwargs):
             assert kwargs["allow_redirects"] is False
@@ -347,12 +361,12 @@ async def test_download_and_mcp_url_add(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_download_private_redirect_and_size_limits(monkeypatch):
+async def test_download_redirect_and_size_limits(monkeypatch):
     requested = []
-    fake_download(monkeypatch, [DownloadResponse(302, location="http://127.0.0.1/secret")], requested)
-    with pytest.raises(ValueError, match="公网"):
-        await server.download_image("https://example.com/image")
-    assert len(requested) == 1
+    fake_download(monkeypatch, [DownloadResponse(302, location="http://127.0.0.1/image"),
+                               DownloadResponse(data=b"image")], requested)
+    assert await server.download_image("https://example.com/image") == b"image"
+    assert requested == ["https://example.com/image", "http://127.0.0.1/image"]
     monkeypatch.setattr(server, "MAX_IMAGE_BYTES", 100)
     for response in [DownloadResponse(size=101), DownloadResponse(data=b"x" * 101)]:
         fake_download(monkeypatch, [response], [])
@@ -364,6 +378,26 @@ async def test_download_private_redirect_and_size_limits(monkeypatch):
     fake_download(monkeypatch, [DownloadResponse(302, location="/loop")] * 6, [])
     with pytest.raises(ValueError, match="超过 5 次"):
         await server.download_image("https://example.com/image")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["file:///etc/passwd", "ftp://example.com/x"])
+async def test_each_redirect_url_is_checked(monkeypatch, location):
+    requested = []
+    fake_download(monkeypatch, [DownloadResponse(302, location="/next"),
+                               DownloadResponse(302, location=location)], requested)
+    with pytest.raises(ValueError):
+        await server.download_image("https://example.com/image")
+    assert requested == ["https://example.com/image", "https://example.com/next"]
+
+
+@pytest.mark.asyncio
+async def test_five_redirects_are_allowed(monkeypatch):
+    requested = []
+    responses = [DownloadResponse(302, location=f"/step-{i}") for i in range(5)]
+    fake_download(monkeypatch, responses + [DownloadResponse(data=b"image")], requested)
+    assert await server.download_image("https://example.com/image") == b"image"
+    assert len(requested) == 6
 
 
 def test_concurrent_alias_updates_and_duplicate_names(tmp_path):
