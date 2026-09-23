@@ -152,6 +152,8 @@ Authorization: Bearer <MCP_TOKEN>
 
 也可以把令牌放进 URL：`https://example.com/mcp?token=<MCP_TOKEN>`。参数值不加 `Bearer `；同时提供请求头和参数时，以请求头为准。
 
+**优先使用请求头传递令牌；如果使用 URL 参数方式，请关闭 `/mcp` 路由的 `access_log`，避免令牌写入访问日志。**
+
 这是共享令牌鉴权，不包含 OAuth 登录。图片链接无需鉴权，可公开访问。
 
 ## 工具
