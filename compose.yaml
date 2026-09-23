@@ -1,0 +1,35 @@
+services:
+  image-mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      MCP_URL: https://${DOMAIN:?Set DOMAIN in .env}/mcp
+      PUBLIC_BASE_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      MCP_TOKEN: ${MCP_TOKEN:?Set MCP_TOKEN in .env}
+      DATA_DIR: /data
+    volumes:
+      - image_data:/data
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      image-mcp:
+        condition: service_healthy
+volumes:
+  image_data:
+  caddy_data:
+  caddy_config:

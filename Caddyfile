@@ -1,0 +1,13 @@
+{$DOMAIN} {
+    request_body {
+        max_size 15MB
+    }
+    handle /mcp {
+        header Cache-Control no-store
+        reverse_proxy image-mcp:8000
+    }
+    handle /images/* {
+        reverse_proxy image-mcp:8000
+    }
+    respond 404
+}

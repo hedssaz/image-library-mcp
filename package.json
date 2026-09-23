@@ -1,0 +1,12 @@
+{
+  "name": "image-library-mcp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ui/build.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "esbuild": "0.28.2"
+  }
+}
