@@ -1,7 +1,7 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 
 const CUSTOM_SIZE = true;
-const PREFERRED_IMAGE_SIZE = 200;
+const PREFERRED_IMAGE_SIZE = 150;
 const image = document.getElementById("image");
 const status = document.getElementById("status");
 const app = new App({ name: "Image Viewer", version: "1.0.0" }, {}, { autoResize: false });

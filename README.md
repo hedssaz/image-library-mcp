@@ -186,7 +186,7 @@ Authorization: Bearer <MCP_TOKEN>
 
 ```javascript
 const CUSTOM_SIZE = true;
-const PREFERRED_IMAGE_SIZE = 200;
+const PREFERRED_IMAGE_SIZE = 150;
 ```
 
 - 开启时，按期望尺寸与宿主上限等比例缩小，小图不放大，只上报一次高度，不收窄 iframe 宽度。
