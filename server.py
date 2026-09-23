@@ -37,17 +37,11 @@ from yarl import URL
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_VIEWER_URI = "ui://image/viewer-v1"
 MAX_REQUEST_BYTES = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64 * 1024
-FORMATS = {
-    "PNG": ("png", "image/png"),
-    "JPEG": ("jpg", "image/jpeg"),
-    "GIF": ("gif", "image/gif"),
-    "WEBP": ("webp", "image/webp"),
-}
+FORMATS = {"PNG": ("png", "image/png"), "JPEG": ("jpg", "image/jpeg"),
+           "GIF": ("gif", "image/gif"), "WEBP": ("webp", "image/webp")}
 Name = Annotated[str, Field(min_length=1, max_length=80)]
-Aliases = Annotated[
-    list[Annotated[str, Field(min_length=1, max_length=40)]],
-    Field(max_length=32),
-]
+Aliases = Annotated[list[Annotated[str, Field(min_length=1, max_length=40)]],
+                    Field(max_length=32)]
 
 
 class TextOutput(BaseModel):
@@ -62,10 +56,7 @@ class ImageOutput(BaseModel):
 
 
 def text_result(text: str) -> CallToolResult:
-    return CallToolResult(
-        content=[TextContent(type="text", text=text)],
-        structuredContent={"text": text},
-    )
+    return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent={"text": text})
 
 
 def fold(value: str) -> str:
@@ -112,13 +103,8 @@ def image_format(data: bytes) -> tuple[str, str]:
                         raise ValueError("图片最多 500 帧，累计像素不得超过 1 亿。")
                     img.load()
             return result
-    except (
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-    ) as exc:
+    except (UnidentifiedImageError, OSError, SyntaxError,
+            Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise ValueError("无法读取图片，文件可能损坏或尺寸过大。") from exc
 
 
@@ -157,12 +143,8 @@ def require_public_ip(host: str) -> None:
 
 
 class PublicResolver(ThreadedResolver):
-    async def resolve(
-        self,
-        host: str,
-        port: int = 0,
-        family: socket.AddressFamily = socket.AF_INET,
-    ) -> list[ResolveResult]:
+    async def resolve(self, host: str, port: int = 0,
+                      family: socket.AddressFamily = socket.AF_INET) -> list[ResolveResult]:
         addresses = await super().resolve(host, port, family)
         for address in addresses:
             require_public_ip(address["host"])
@@ -195,9 +177,7 @@ async def download_image(value: str) -> bytes:
 async def _download_image(value: str) -> bytes:
     connector = aiohttp.TCPConnector(resolver=PublicResolver())
     async with aiohttp.ClientSession(
-        connector=connector,
-        trust_env=False,
-        cookie_jar=aiohttp.DummyCookieJar(),
+        connector=connector, trust_env=False, cookie_jar=aiohttp.DummyCookieJar(),
         timeout=aiohttp.ClientTimeout(total=30, sock_connect=10),
         headers={"User-Agent": "image-mcp/1.0", "Accept": "image/*"},
     ) as session:
@@ -213,10 +193,7 @@ async def _download_image(value: str) -> bytes:
                     continue
                 if response.status != 200:
                     raise ValueError(f"图片下载失败，来源返回 HTTP {response.status}。")
-                if (
-                    response.content_length
-                    and response.content_length > MAX_IMAGE_BYTES
-                ):
+                if response.content_length and response.content_length > MAX_IMAGE_BYTES:
                     raise ValueError("图片不得超过 10 MiB。")
                 data = bytearray()
                 async for chunk in response.content.iter_chunked(64 * 1024):
@@ -247,9 +224,7 @@ class ImageLibrary:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         db.create_function("fold", 1, fold, deterministic=True)
-        db.create_collation(
-            "UNICODE", lambda a, b: (fold(a) > fold(b)) - (fold(a) < fold(b))
-        )
+        db.create_collation("UNICODE", lambda a, b: (fold(a) > fold(b)) - (fold(a) < fold(b)))
         try:
             with db:
                 yield db
@@ -268,25 +243,15 @@ class ImageLibrary:
 
     def add(self, name: str, aliases: list[str], description: str, data: bytes) -> str:
         extension, mime = image_format(data)
-        row = {
-            "filename": f"{uuid.uuid4().hex}.{extension}",
-            "name": name,
-            "aliases": json.dumps(aliases, ensure_ascii=False),
-            "description": description,
-            "mime": mime,
-            "data": data,
-        }
+        row = {"filename": f"{uuid.uuid4().hex}.{extension}", "name": name,
+               "aliases": json.dumps(aliases, ensure_ascii=False),
+               "description": description, "mime": mime, "data": data}
         try:
             with self.connect() as db:
-                db.execute(
-                    """INSERT INTO images VALUES
-                    (:filename, :name, :aliases, :description, :mime, :data)""",
-                    row,
-                )
+                db.execute("""INSERT INTO images VALUES
+                    (:filename, :name, :aliases, :description, :mime, :data)""", row)
         except sqlite3.IntegrityError as exc:
-            raise ValueError(
-                "图片名字已存在，请换一个名字，或使用 addalias 添加别名。"
-            ) from exc
+            raise ValueError("图片名字已存在，请换一个名字，或使用 addalias 添加别名。") from exc
         return self.line(row)
 
     def search(self, query: str, limit: int, offset: int) -> str:
@@ -315,8 +280,7 @@ class ImageLibrary:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
-                "SELECT filename, name, aliases, description FROM images WHERE name = ?",
-                (name,),
+                "SELECT filename, name, aliases, description FROM images WHERE name = ?", (name,)
             ).fetchone()
             if existing is None:
                 raise ValueError("图片不存在，请先 search 查询准确的图片名字。")
@@ -324,18 +288,14 @@ class ImageLibrary:
             current_aliases = json.loads(row["aliases"])
             merged_aliases = aliases_unique(current_aliases + aliases)
             row["aliases"] = json.dumps(merged_aliases, ensure_ascii=False)
-            db.execute(
-                "UPDATE images SET aliases = ? WHERE filename = ?",
-                (row["aliases"], row["filename"]),
-            )
+            db.execute("UPDATE images SET aliases = ? WHERE filename = ?",
+                       (row["aliases"], row["filename"]))
         return self.line(row)
 
     def delete(self, name: str) -> str:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT name FROM images WHERE name = ?", (name,)
-            ).fetchone()
+            row = db.execute("SELECT name FROM images WHERE name = ?", (name,)).fetchone()
             if row is None:
                 raise ValueError("图片不存在，请先 search 查询准确的图片名字。")
             db.execute("DELETE FROM images WHERE name = ?", (name,))
@@ -343,19 +303,13 @@ class ImageLibrary:
 
     def get_image(self, filename: str) -> sqlite3.Row | None:
         with self.connect() as db:
-            return db.execute(
-                "SELECT data, mime FROM images WHERE filename = ?", (filename,)
-            ).fetchone()
+            return db.execute("SELECT data, mime FROM images WHERE filename = ?", (filename,)).fetchone()
 
     def image_info(self, row: sqlite3.Row) -> dict[str, str | int]:
         with Image.open(io.BytesIO(row["data"])) as image:
             width, height = image.size
-        return {
-            "name": row["name"],
-            "url": f"{self.public_base_url}/images/{row['filename']}",
-            "width": width,
-            "height": height,
-        }
+        return {"name": row["name"], "url": f"{self.public_base_url}/images/{row['filename']}",
+                "width": width, "height": height}
 
     def _get_by_name(self, name: str) -> sqlite3.Row:
         with self.connect() as db:
@@ -368,10 +322,8 @@ class ImageLibrary:
         row = self._get_by_name(name)
         encoded_image = base64.b64encode(row["data"]).decode("ascii")
         return CallToolResult(
-            content=[
-                TextContent(type="text", text=self.line(row)),
-                ImageContent(type="image", mimeType=row["mime"], data=encoded_image),
-            ],
+            content=[TextContent(type="text", text=self.line(row)),
+                     ImageContent(type="image", mimeType=row["mime"], data=encoded_image)],
             structuredContent=self.image_info(row),
         )
 
@@ -406,8 +358,7 @@ class MCPGuard:
             token = query.get("token", "")
         if not hmac.compare_digest(token.encode(), self.token):
             response = JSONResponse(
-                {"error": "需要有效的 Bearer token。"},
-                status_code=401,
+                {"error": "需要有效的 Bearer token。"}, status_code=401,
                 headers={"WWW-Authenticate": "Bearer"},
             )
             await response(scope, receive, send)
@@ -436,9 +387,7 @@ class MCPGuard:
         await self.app(scope, replay, send)
 
 
-def build_app(
-    mcp_url: str, public_base_url: str, token: str, data_dir: Path
-) -> Starlette:
+def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) -> Starlette:
     endpoint = URL(mcp_url)
     if (
         endpoint.scheme not in {"http", "https"}
@@ -459,47 +408,30 @@ def build_app(
         or image_origin.fragment
         or image_origin.user is not None
     ):
-        raise ValueError(
-            "PUBLIC_BASE_URL 必须是完整域名地址，不含路径，例如 https://example.com。"
-        )
+        raise ValueError("PUBLIC_BASE_URL 必须是完整域名地址，不含路径，例如 https://example.com。")
     if len(token) < 32 or not token.isascii() or any(c.isspace() for c in token):
         raise ValueError("MCP_TOKEN 必须是至少 32 位、不含空白的 ASCII 随机令牌。")
     library = ImageLibrary(data_dir, str(image_origin).rstrip("/"))
     viewer_html = Path(__file__).with_name("viewer.html").read_text(encoding="utf-8")
     mcp = FastMCP(
-        "Image Library",
-        stateless_http=True,
-        json_response=True,
+        "Image Library", stateless_http=True, json_response=True,
         streamable_http_path=endpoint.path,
-        instructions=(
-            "先 search 搜索图片列表；要在聊天里显示或发送图片，调用 show_image(准确图片名字)，"
-            "由 MCP App 内联显示图片，不需要另写 Markdown 图片。"
-            "需要读取原图内容和外链时使用 get，它直接提供 ImageContent。"
-            "添加时 URL 与 Base64 二选一。别名和删除使用准确图片名字。"
-        ),
+        instructions="先 search 搜索图片列表；要在聊天里显示或发送图片，调用 show_image(准确图片名字)，"
+                     "由 MCP App 内联显示图片，不需要另写 Markdown 图片。"
+                     "需要读取原图内容和外链时使用 get，它直接提供 ImageContent。"
+                     "添加时 URL 与 Base64 二选一。别名和删除使用准确图片名字。",
         transport_security=TransportSecuritySettings(
-            allowed_hosts=[
-                endpoint.raw_authority,
-                "127.0.0.1:*",
-                "localhost:*",
-                "[::1]:*",
-            ],
+            allowed_hosts=[endpoint.raw_authority, "127.0.0.1:*", "localhost:*", "[::1]:*"],
             allowed_origins=[str(endpoint.origin())],
         ),
     )
 
     @mcp.resource(
-        IMAGE_VIEWER_URI,
-        name="image_viewer",
-        title="图片",
+        IMAGE_VIEWER_URI, name="image_viewer", title="图片",
         description="在聊天中显示 show_image 返回的图片。",
         mime_type="text/html;profile=mcp-app",
-        meta={
-            "ui": {
-                "csp": {"resourceDomains": [str(image_origin.origin())]},
-                "prefersBorder": False,
-            }
-        },
+        meta={"ui": {"csp": {"resourceDomains": [str(image_origin.origin())]},
+                     "prefersBorder": False}},
     )
     def image_viewer() -> str:
         return viewer_html
@@ -507,8 +439,7 @@ def build_app(
     @mcp.tool(
         title="显示图片",
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
-        meta={"ui": {"resourceUri": IMAGE_VIEWER_URI}},
-        structured_output=True,
+        meta={"ui": {"resourceUri": IMAGE_VIEWER_URI}}, structured_output=True,
     )
     async def show_image(name: Name) -> Annotated[CallToolResult, ImageOutput]:
         """在聊天中用 MCP App 直接显示一张图片。name 使用 search 返回的准确名字。
@@ -516,15 +447,10 @@ def build_app(
         """
         return await asyncio.to_thread(library.show_image, clean(name))
 
-    @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
-        structured_output=True,
-    )
-    async def search(
-        query: Annotated[str, Field(max_length=200)] = "",
-        limit: Annotated[int, Field(ge=1, le=100)] = 20,
-        offset: Annotated[int, Field(ge=0)] = 0,
-    ) -> Annotated[CallToolResult, TextOutput]:
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False), structured_output=True)
+    async def search(query: Annotated[str, Field(max_length=200)] = "",
+                     limit: Annotated[int, Field(ge=1, le=100)] = 20,
+                     offset: Annotated[int, Field(ge=0)] = 0) -> Annotated[CallToolResult, TextOutput]:
         """搜索库内图片的名字、别名和描述；忽略大小写，空格分隔的词须全部匹配。
         空 query 列出最新图片；用 limit/offset 翻页。返回：- 图片名字 | 别名/描述 | 公网图片链接。
         此工具仅返回文字列表；选定后调用 get(name) 获取实际图片内容和外链。
@@ -532,10 +458,7 @@ def build_app(
         result = await asyncio.to_thread(library.search, query, limit, offset)
         return text_result(result)
 
-    @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
-        structured_output=True,
-    )
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False), structured_output=True)
     async def get(name: Name) -> Annotated[CallToolResult, ImageOutput]:
         """按 search 返回的准确图片名字获取一张图片，不按别名或模糊关键词选择。
         同时返回文字说明（名字、别名/描述、可公开访问的外链）和原图 ImageContent（Base64、真实 MIME）。
@@ -543,17 +466,10 @@ def build_app(
         """
         return await asyncio.to_thread(library.get, clean(name))
 
-    @mcp.tool(
-        annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True),
-        structured_output=True,
-    )
-    async def add(
-        name: Name,
-        url: Annotated[str, Field(max_length=8192)] | None = None,
-        base64_data: str | None = None,
-        aliases: Aliases | None = None,
-        description: Annotated[str, Field(max_length=500)] = "",
-    ) -> Annotated[CallToolResult, TextOutput]:
+    @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True), structured_output=True)
+    async def add(name: Name, url: Annotated[str, Field(max_length=8192)] | None = None,
+                  base64_data: str | None = None, aliases: Aliases | None = None,
+                  description: Annotated[str, Field(max_length=500)] = "") -> Annotated[CallToolResult, TextOutput]:
         """添加图片：url（由服务端下载）和 base64_data（纯 Base64 或 data URL）必须且只能提供一个。
         名字须唯一；aliases 可为 ["风景", "户外"]，description 为描述。
         支持 PNG/JPEG/GIF/WebP，保留动图，最大 10 MiB；返回名字、别名/描述和本站公网链接。
@@ -573,15 +489,9 @@ def build_app(
         result = await asyncio.to_thread(library.add, name, labels, description, data)
         return text_result(result)
 
-    @mcp.tool(
-        annotations=ToolAnnotations(
-            destructiveHint=False, idempotentHint=True, openWorldHint=False
-        ),
-        structured_output=True,
-    )
-    async def addalias(
-        name: Name, aliases: Annotated[Aliases, Field(min_length=1)]
-    ) -> Annotated[CallToolResult, TextOutput]:
+    @mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True,
+                                         openWorldHint=False), structured_output=True)
+    async def addalias(name: Name, aliases: Annotated[Aliases, Field(min_length=1)]) -> Annotated[CallToolResult, TextOutput]:
         """为准确图片名字添加一个或多个别名，例如 aliases=["风景", "晨光"]。
         重复别名自动去重；返回更新后的名字、别名/描述和公网图片链接。
         """
@@ -590,10 +500,7 @@ def build_app(
         result = await asyncio.to_thread(library.addalias, name, aliases)
         return text_result(result)
 
-    @mcp.tool(
-        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=False),
-        structured_output=True,
-    )
+    @mcp.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=False), structured_output=True)
     async def delete(name: Name) -> Annotated[CallToolResult, TextOutput]:
         """永久删除准确图片名字对应的图片和全部别名，源站返回 404，缓存副本到期后失效。
         请仅在用户明确要求删除这张图片时调用；不能用模糊关键词或别名删除。
