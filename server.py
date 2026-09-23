@@ -72,16 +72,6 @@ def fold(value: str) -> str:
     return unicodedata.normalize("NFKC", value).casefold()
 
 
-def compare_names(left: str, right: str) -> int:
-    left = fold(left)
-    right = fold(right)
-    if left < right:
-        return -1
-    if left > right:
-        return 1
-    return 0
-
-
 def clean(value: str) -> str:
     return " ".join(value.split())
 
@@ -257,7 +247,9 @@ class ImageLibrary:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         db.create_function("fold", 1, fold, deterministic=True)
-        db.create_collation("UNICODE", compare_names)
+        db.create_collation(
+            "UNICODE", lambda a, b: (fold(a) > fold(b)) - (fold(a) < fold(b))
+        )
         try:
             with db:
                 yield db
