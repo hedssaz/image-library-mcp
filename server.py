@@ -289,8 +289,14 @@ class ImageLibrary:
             structuredContent=self.image_info(row),
         )
 
-    def show_image(self, name: str) -> CallToolResult:
-        return self.get(name)
+    def show_image(self, name: str, include_image: bool = True) -> CallToolResult:
+        if include_image:
+            return self.get(name)
+        row = self._get_by_name(name)
+        return CallToolResult(
+            content=[TextContent(type="text", text=self.line(row))],
+            structuredContent=self.image_info(row),
+        )
 
 
 class MCPGuard:
@@ -345,7 +351,8 @@ class MCPGuard:
         await self.app(scope, replay, send)
 
 
-def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) -> Starlette:
+def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path,
+              *, show_image_content: bool = True) -> Starlette:
     endpoint = URL(mcp_url)
     if (
         endpoint.scheme not in {"http", "https"}
@@ -371,12 +378,17 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
         raise ValueError("MCP_TOKEN 必须是至少 32 位、不含空白的 ASCII 随机令牌。")
     library = ImageLibrary(data_dir, str(image_origin).rstrip("/"))
     viewer_html = Path(__file__).with_name("viewer.html").read_text(encoding="utf-8")
+    image_content_note = (
+        "当前已开启原图返回：同时提供 ImageContent（Base64、真实 MIME），无需另调 get。"
+        if show_image_content else
+        "当前已关闭原图返回：仅返回文字和卡片数据，需要读取原图时调用 get。"
+    )
     mcp = FastMCP(
         "Image Library", stateless_http=True, json_response=True,
         streamable_http_path=endpoint.path,
         instructions="先 search 搜索图片列表；要在聊天里显示或发送图片，调用 show_image(准确图片名字)，"
-                     "由 MCP App 内联显示图片，同时返回 ImageContent 供模型读取，无需另调 get 或另写 Markdown 图片。"
-                     "仅需读取原图内容和外链、不展示卡片时使用 get。"
+                     "由 MCP App 内联显示图片，无需另写 Markdown 图片。" + image_content_note +
+                     "get 始终提供原图 ImageContent 和外链，不挂载卡片。"
                      "添加时 URL 与 Base64 二选一。别名和删除使用准确图片名字。",
         transport_security=TransportSecuritySettings(
             allowed_hosts=[endpoint.raw_authority, "127.0.0.1:*", "localhost:*", "[::1]:*"],
@@ -396,16 +408,13 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
 
     @mcp.tool(
         title="显示图片",
+        description="在聊天中展示或发送表情包。name 使用 search 返回的准确名字；由 MCP App 直接显示图片。"
+                    "返回名字、外链和原始 width/height，UI 等比例缩小、不放大小图。" + image_content_note,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         meta={"ui": {"resourceUri": IMAGE_VIEWER_URI}}, structured_output=True,
     )
     async def show_image(name: Name) -> Annotated[CallToolResult, ImageOutput]:
-        """在聊天中展示或发送表情包时调用本工具，由 MCP App 直接显示图片。
-        name 使用 search 返回的准确名字；无需先调用 get 或另写 Markdown 图片。
-        同时返回原图 ImageContent（Base64、真实 MIME）供模型读取，以及图片外链、名字和原始 width/height。
-        UI 按配置的期望尺寸及宿主空间等比例缩小，不放大小图。
-        """
-        return await asyncio.to_thread(library.show_image, clean(name))
+        return await asyncio.to_thread(library.show_image, clean(name), show_image_content)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False), structured_output=True)
     async def search(query: Annotated[str, Field(max_length=200)] = "",
@@ -415,7 +424,7 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
         各关键词的匹配结果合并，同一张图片只返回一次。
         空 query 列出最新图片；用 limit/offset 翻页。返回：- 图片名字 | 别名/描述 | 公网图片链接。
         此工具仅返回文字列表；展示或发送表情包时，用选定结果的准确名字调用 show_image(name)。
-        仅需读取原图 ImageContent 和外链、不展示卡片时，调用 get(name)。
+        需要单独读取原图 ImageContent 和外链时，调用 get(name)。
         """
         result = await asyncio.to_thread(library.search, query, limit, offset)
         return text_result(result)
@@ -423,7 +432,7 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False), structured_output=True)
     async def get(name: Name) -> Annotated[CallToolResult, ImageOutput]:
         """按 search 返回的准确图片名字获取一张图片，不按别名或模糊关键词选择。
-        用于只读取原图内容、不展示卡片；需要展示并读取图片时调用 show_image(name)。
+        始终返回原图 ImageContent，不挂载卡片；展示表情包时调用 show_image(name)。
         同时返回文字说明（名字、别名/描述、可公开访问的外链）和原图 ImageContent（Base64、真实 MIME）。
         直接读取库内原图，无需客户端再下载外链；图片 Base64 只在 image 内容块中，不作为文字返回。
         """
@@ -503,7 +512,8 @@ def create_app() -> Starlette:
     public_base_url = os.environ.get("PUBLIC_BASE_URL", "")
     token = os.environ.get("MCP_TOKEN", "")
     data_dir = Path(os.environ.get("DATA_DIR", "./data"))
-    return build_app(mcp_url, public_base_url, token, data_dir)
+    show_image_content = os.environ.get("SHOW_IMAGE_CONTENT", "true").strip().lower() == "true"
+    return build_app(mcp_url, public_base_url, token, data_dir, show_image_content=show_image_content)
 
 
 if __name__ == "__main__":

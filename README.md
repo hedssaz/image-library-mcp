@@ -163,7 +163,7 @@ Authorization: Bearer <MCP_TOKEN>
 | `add(name, url 或 base64_data, aliases=[], description="")` | 添加表情包；链接与 Base64 二选一 |
 | `search(query="", limit=20, offset=0)` | 按名称、别名和描述搜索表情包；空查询列出表情包 |
 | `get(name)` | 返回原图 ImageContent、外链及原始宽高，不挂载卡片 |
-| `show_image(name)` | 用 MCP App 展示表情包，同时返回原图 ImageContent 供模型读取 |
+| `show_image(name)` | 用 MCP App 展示表情包，默认同时返回原图 ImageContent 供模型读取，可通过服务端配置关闭 |
 | `addalias(name, aliases)` | 为指定表情包添加别名，如“开心”“无语” |
 | `delete(name)` | 删除指定表情包及其别名 |
 
@@ -178,7 +178,11 @@ Authorization: Bearer <MCP_TOKEN>
 }
 ```
 
-添加后，可以在连接了这个 MCP 的客户端中说：“给我发一张开心的表情包。”工具流程是 `search(query="开心")` → `show_image(name="开心大笑")`。同一次展示调用同时返回图片内容，模型无需再调用 `get`。仅需读取原图和外链、不展示卡片时，使用 `get(name="开心大笑")`。
+添加后，可以在连接了这个 MCP 的客户端中说：“给我发一张开心的表情包。”工具流程是 `search(query="开心")` → `show_image(name="开心大笑")`。默认同一次展示调用同时返回图片内容，模型无需再调用 `get`。仅需读取原图和外链、不展示卡片时，使用 `get(name="开心大笑")`。
+
+服务端环境变量 `SHOW_IMAGE_CONTENT` 默认是 `true`。设为 `false` 后，`show_image` 仍展示卡片并返回文字、外链和宽高，但不再附带原图 `ImageContent`；`get` 始终返回原图。这个开关不是 MCP 调用参数。
+
+Docker 部署时在 `.env` 中设置 `SHOW_IMAGE_CONTENT=false`，再执行 `docker compose up -d`；直接运行 Python 时设置 `export SHOW_IMAGE_CONTENT=false`，或写入 systemd 的环境文件，然后重启服务。设回 `true` 即可开启。
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词命中任意一个即可。例如 `开心 无语` 会返回匹配“开心”或“无语”的表情包，同一张只返回一次。`limit`（1–100）和 `offset` 对合并后的结果分页。其他工具使用准确图片名称。
 

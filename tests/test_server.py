@@ -37,8 +37,9 @@ def text(result):
 
 
 @asynccontextmanager
-async def connected(path, query_token=False):
-    app = server.build_app(ORIGIN + "/mcp", IMAGE_ORIGIN, TOKEN, path)
+async def connected(path, query_token=False, *, app=None):
+    if app is None:
+        app = server.build_app(ORIGIN + "/mcp", IMAGE_ORIGIN, TOKEN, path)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as public:
@@ -186,6 +187,46 @@ async def test_mcp_app_resource_and_tool_result(tmp_path):
         assert (await client.call_tool("show_image", {"name": "风景"})).isError
         await client.call_tool("delete", {"name": "Viewer"})
         assert (await client.call_tool("show_image", {"name": "Viewer"})).isError
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("setting,enabled", [(None, True), ("true", True), ("false", False)])
+async def test_show_image_content_switch(tmp_path, monkeypatch, setting, enabled):
+    for key, value in {
+        "MCP_URL": ORIGIN + "/mcp", "PUBLIC_BASE_URL": IMAGE_ORIGIN,
+        "MCP_TOKEN": TOKEN, "DATA_DIR": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(key, value)
+    if setting is None:
+        monkeypatch.delenv("SHOW_IMAGE_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("SHOW_IMAGE_CONTENT", setting)
+
+    async with connected(tmp_path, app=server.create_app()) as (client, public):
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "show_image")
+        assert set(tool.inputSchema["properties"]) == {"name"}
+        assert ("当前已开启" if enabled else "当前已关闭") in tool.description
+        assert tool.meta["ui"]["resourceUri"] == server.IMAGE_VIEWER_URI
+        await client.call_tool("add", {"name": "Switch", "base64_data": encoded()})
+
+        def unexpected_encoding(*args, **kwargs):
+            raise AssertionError("Disabled show_image must not encode the original image")
+
+        with monkeypatch.context() as patch:
+            if not enabled:
+                patch.setattr(server.base64, "b64encode", unexpected_encoding)
+            shown = await client.call_tool("show_image", {"name": "Switch"})
+        assert not shown.isError
+        assert [block.type for block in shown.content] == (["text", "image"] if enabled else ["text"])
+        jsonschema.validate(shown.structuredContent, tool.outputSchema)
+        assert (await public.get(shown.structuredContent["url"])).content == picture()
+        obtained = await client.call_tool("get", {"name": "Switch"})
+        assert not obtained.isError
+        assert obtained.structuredContent == shown.structuredContent
+        assert text(obtained) == text(shown)
+        assert base64.b64decode(obtained.content[1].data) == picture()
+        if enabled:
+            assert shown.content[1].data == obtained.content[1].data
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ services:
       MCP_URL: https://${DOMAIN:?Set DOMAIN in .env}/mcp
       PUBLIC_BASE_URL: https://${DOMAIN:?Set DOMAIN in .env}
       MCP_TOKEN: ${MCP_TOKEN:?Set MCP_TOKEN in .env}
+      SHOW_IMAGE_CONTENT: "${SHOW_IMAGE_CONTENT:-true}"
       DATA_DIR: /data
     volumes:
       - image_data:/data
