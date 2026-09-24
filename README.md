@@ -199,7 +199,8 @@ const CUSTOM_SIZE = true;
 const PREFERRED_IMAGE_SIZE = 150;
 ```
 
-- 开启时，按期望尺寸与宿主上限等比例缩小，小图不放大，只上报一次高度，不收窄 iframe 宽度。
+- 收到图片后，等待宿主提供有效的 `containerDimensions.maxWidth` 或 `width` 再布局。初始宽度为 0 表示尚未就绪，不会算出零尺寸或上报高度 0。
+- 开启时，按期望尺寸与宿主宽度等比例缩小，小图不放大。宿主有效宽度变化时重新布局，仅在计算高度改变时上报，不收窄 iframe 宽度；高度回传本身不触发重新布局。
 - 关闭时，不上报尺寸，图片默认上限为 300×300。
 
 表情包默认使用 `8px` 圆角。在 `ui/build.mjs` 中修改 `img` 的 `border-radius` 即可调整，设为 `0` 恢复直角。圆角仅影响卡片中的显示，不修改原图文件或外链。
@@ -232,7 +233,7 @@ img {
 
 切换居中或右对齐时，先把 `padding-inline-start` 设为 `0px`。右对齐后若要与右边缘留出距离，可加 `padding-inline-end: 16px`。
 
-对齐和偏移不依赖 `CUSTOM_SIZE`，但建议左对齐时一起开启，让卡片高度随图片收紧。偏移只调整留白，不修改期望图片尺寸，也不会增加尺寸回传次数。
+对齐和偏移不依赖 `CUSTOM_SIZE`，但建议左对齐时一起开启，让卡片高度随图片收紧。偏移只调整留白，不修改期望图片尺寸。
 
 ### 让修改生效
 
@@ -243,7 +244,7 @@ npm ci
 npm run build
 ```
 
-`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，直接部署不需要 Node.js。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 版本，并在客户端刷新工具，避免旧模板缓存。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
+`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，直接部署不需要 Node.js。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 版本，并保留旧消息引用的资源地址可读；在客户端刷新工具以加载新模板。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
 
 ## 运行测试
 
@@ -253,6 +254,8 @@ npm run build
 .venv/bin/pip install pytest==9.0.3 pytest-asyncio==1.4.0
 .venv/bin/python -m pytest -q tests
 ```
+
+查看器的数据到达顺序、零宽度等待和尺寸回传测试：`npm run test:ui`（Node.js 20+）。
 
 ## 许可证
 

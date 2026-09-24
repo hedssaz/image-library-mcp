@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ui/build.mjs"
+    "build": "node ui/build.mjs",
+    "test:ui": "node --test tests/viewer.test.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "2.0.0",
