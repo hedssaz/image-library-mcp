@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "image-library-mcp",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-09-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": { "SHOW_IMAGE_CONTENT": "true" },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "image-library",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "cloudflare/migrations"
+  }],
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "image-library" }],
+  "rules": [{ "type": "Text", "globs": ["**/viewer.html"], "fallthrough": true }],
+  "observability": { "enabled": false }
+}

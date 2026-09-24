@@ -2,16 +2,60 @@
 
 让 AI 在聊天中搜索、发送你自己的表情包。通过链接或 Base64 添加表情包，再用“开心”“无语”“吵架”等名字、别名或描述搜索；支持 MCP Apps 的客户端可以直接在聊天里展示选中的表情包。
 
-表情包原图和元数据保存在 SQLite 中，每张图都有可公开访问的外链。项目不附带图库，部署后按需添加自己的表情包。
+Python/Docker 方式将表情包原图和元数据保存在 SQLite；Cloudflare 方式使用 D1 保存元数据、R2 保存原图。每张图都有可公开访问的外链。项目不附带图库，部署后按需添加自己的表情包。
 
 ## 选择运行方式
 
-两种方式任选其一：
+三种方式任选其一：
 
+- **Cloudflare 部署**：无需 VPS 或自备域名，通过部署向导创建 Workers、D1 和 R2，获得 `*.workers.dev/mcp` 地址。
 - **Docker 部署**：使用项目自带的 Caddy 配置 HTTPS，适合服务器的 80、443 端口尚未被占用的情况。
 - **直接运行 Python**：可仅在本机测试，也可配合已有的 Nginx 对外提供 HTTPS，适合服务器上已经部署其他项目的情况。
 
-对外部署默认只用一个域名，例如 `example.com`：MCP 地址是 `https://example.com/mcp`，图片地址是 `https://example.com/images/<文件名>`。只需将这个域名解析到服务器，无需配置 `api`、`images` 子域名或泛域名解析。
+Docker/Python 对外部署默认只用一个域名，例如 `example.com`：MCP 地址是 `https://example.com/mcp`，图片地址是 `https://example.com/images/<文件名>`。只需将这个域名解析到服务器，无需配置 `api`、`images` 子域名或泛域名解析。
+
+## Cloudflare 部署（无需 VPS / 自备域名）
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fhedssaz%2Fimage-library-mcp%2Ftree%2Ffeat%2Fcloudflare-deploy)
+
+按钮当前指向 `feat/cloudflare-deploy` 分支。需要 Cloudflare 和 GitHub 账户，以及已开通的 R2；R2 开通可能要求填写付款资料，请自行确认 [R2 开通流程](https://developers.cloudflare.com/r2/get-started/)和计费条款。项目不会替你开通计费。
+
+1. 点击按钮，登录 Cloudflare 并连接 GitHub，将项目复制到自己的仓库。
+2. 按向导选择 Worker、D1 数据库和 R2 bucket 名字。`DB`、`IMAGES` 是绑定名，保持不变；资源名可以自定义，向导会自动创建、绑定并更新配置中的 ID。
+3. 在 Secrets 中填写自己的 `MCP_TOKEN`：至少 32 位、不含空白的 ASCII 随机令牌。可在本机运行 `openssl rand -hex 32` 生成。不要把它写进仓库。`SHOW_IMAGE_CONTENT` 默认 `true`，需要仅返回卡片和外链时改成 `false`。
+4. 保留向导识别的构建命令 `npm run build` 和部署命令 `npm run deploy`。后者先按 **DB 绑定名**执行 D1 migrations，再发布 Worker；不要省略数据库初始化。
+5. 部署成功后使用 `https://<worker>.<account>.workers.dev/mcp`，请求头为 `Authorization: Bearer <MCP_TOKEN>`。图片由同域的 `/images/<文件名>` 提供，无需公开 R2 bucket，也无需配置 `DOMAIN`、`MCP_URL` 或 `PUBLIC_BASE_URL`。
+
+向导使用根目录完整项目，直接构建已有卡片 UI。D1/R2 自动创建、secret 提示和部署命令遵循 [Cloudflare Deploy Buttons 文档](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。尚未用 Cloudflare 账户完成真实向导部署；本地验证范围见下文，按钮可进入向导不等于已验证云端部署成功。
+
+修改自己的仓库后由 Workers Builds 重新部署；开关写在 `wrangler.jsonc` 的 `vars.SHOW_IMAGE_CONTENT` 中。轮换令牌可在 Worker 设置中更新 Secret，或在已登录 Wrangler 的本地克隆中执行 `npx wrangler secret put MCP_TOKEN`。更新现有部署时保留向导生成的数据库 ID 和 bucket 名字，不要把模板占位 ID 覆盖回去。删除 D1/R2 资源会丢失数据。
+
+### 本地开发与验证
+
+需要 Node.js 22.18+。在仓库根目录执行：
+
+```bash
+npm ci
+cp .dev.vars.example .dev.vars
+# 编辑 .dev.vars，填入自己生成的 MCP_TOKEN
+npm run build
+npm run db:local
+npm run dev
+```
+
+本地地址通常为 `http://127.0.0.1:8787/mcp`，以 Wrangler 输出为准。D1/R2 模拟数据持久保存在 `.wrangler/state`；本地开发不访问线上图库。
+
+```bash
+npm run check
+npm run test:cloudflare
+npm run build:worker
+```
+
+集成测试使用独立临时 D1/R2 和测试图片来源，覆盖 MCP 初始化、鉴权优先级、六个工具及 outputSchema、OR 搜索/Unicode 折叠/分页、所有格式和动图的原始字节/MIME/尺寸、外链/HEAD/ETag、增删/重启持久化、开关两种状态、下载限制及 30 秒总超时。卡片布局通过脚本模拟宿主校验；真实客户端内嵌效果仍需在支持 MCP Apps 的客户端确认。`build:worker` 仅做本地 dry-run 打包，不上传。
+
+Worker 使用 TypeScript、当前无状态 `createMcpHandler` 和 MCP SDK v2，没有采用已弃用的 McpAgent 模板。Python 兼容性检查发现现有实现依赖 `asyncio.to_thread`、原生图像依赖以及 SQLite 文件；[Python Workers 不提供可用的线程，文件系统也不持久](https://developers.cloudflare.com/workers/languages/python/stdlib/)，因此没有直接搬运 Python 服务。Python/Docker 入口及数据格式保持原状。
+
+图片会完整解码校验，最多 500 帧、累计 1 亿像素，然后保存原始字节；不会转码动图。Workers 的 CPU、内存、请求量和 D1/R2 容量仍受账户套餐限制：特别是免费 Workers 的 CPU 配额较小，大图或长动图可能需付费套餐才能完成解码。10 MiB 是本项目的文件上限，不保证套餐允许处理每一张上限内图片；请参考 [Workers 运行限制](https://developers.cloudflare.com/workers/platform/limits/)。本地测试不能替代线上配额与计费验证。
 
 ## 方式一：Docker 部署
 
@@ -182,7 +226,7 @@ Authorization: Bearer <MCP_TOKEN>
 
 服务端环境变量 `SHOW_IMAGE_CONTENT` 默认是 `true`。设为 `false` 后，`show_image` 仍展示卡片并返回文字、外链和宽高，但不再附带原图 `ImageContent`；`get` 始终返回原图。这个开关不是 MCP 调用参数。
 
-Docker 部署时在 `.env` 中设置 `SHOW_IMAGE_CONTENT=false`，再执行 `docker compose up -d`；直接运行 Python 时设置 `export SHOW_IMAGE_CONTENT=false`，或写入 systemd 的环境文件，然后重启服务。设回 `true` 即可开启。
+Cloudflare 部署时修改 `wrangler.jsonc` 并重新部署。Docker 部署时在 `.env` 中设置 `SHOW_IMAGE_CONTENT=false`，再执行 `docker compose up -d`；直接运行 Python 时设置 `export SHOW_IMAGE_CONTENT=false`，或写入 systemd 的环境文件，然后重启服务。设回 `true` 即可开启。
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词命中任意一个即可。例如 `开心 无语` 会返回匹配“开心”或“无语”的表情包，同一张只返回一次。`limit`（1–100）和 `offset` 对合并后的结果分页。其他工具使用准确图片名称。
 
@@ -243,7 +287,7 @@ npm ci
 npm run build
 ```
 
-`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，直接部署不需要 Node.js。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 版本，并在客户端刷新工具，避免旧模板缓存。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
+`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，Python/Docker 直接部署不需要 Node.js。Cloudflare 构建会自动重新生成卡片。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 和 `cloudflare/worker.ts` 中的 `VIEWER_URI` 版本，并在客户端刷新工具，避免旧模板缓存。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
 
 ## 运行测试
 
