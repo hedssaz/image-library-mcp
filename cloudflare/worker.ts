@@ -6,7 +6,7 @@ import { z } from 'zod';
 import viewer from '../viewer.html';
 import { ImageLibrary, MAX_REQUEST_BYTES, readLimited, downloadImage, decodeImage, type Env } from './library';
 
-const VIEWER_URI = 'ui://image/viewer-v6';
+const VIEWER_URI = 'ui://image/viewer';
 const name = z.string().min(1).max(80);
 const aliases = z.array(z.string().min(1).max(40)).max(32);
 const textOutput = z.object({ text: z.string() });
@@ -23,12 +23,9 @@ function createServer(env: Env, origin: string) {
   });
   const library = new ImageLibrary(env, origin);
   const ui = { csp: { resourceDomains: [origin] }, prefersBorder: false };
-  // Serve the fixed viewer for both new tools and cards in existing conversations.
-  for (const [name, uri] of [['image_viewer', VIEWER_URI], ['image_viewer_previous', 'ui://image/viewer-v5']]) {
-    server.registerResource(name, uri, {
-      title: '图片', description: '在聊天中显示 show_image 返回的图片。', mimeType: 'text/html;profile=mcp-app', _meta: { ui },
-    }, async () => ({ contents: [{ uri, mimeType: 'text/html;profile=mcp-app', text: viewer, _meta: { ui } }] }));
-  }
+  server.registerResource('image_viewer', VIEWER_URI, {
+    title: '图片', description: '在聊天中显示 show_image 返回的图片。', mimeType: 'text/html;profile=mcp-app', _meta: { ui },
+  }, async () => ({ contents: [{ uri: VIEWER_URI, mimeType: 'text/html;profile=mcp-app', text: viewer, _meta: { ui } }] }));
   server.registerTool('search', {
     description: '搜索库内图片的名字、别名和描述；忽略大小写，空格分隔的多个词命中任意一个即可，合并去重，准确名字优先。空 query 列出最新图片；用 limit/offset 翻页。展示或发送图片时，用结果的准确名字调用 show_image(name)。',
     inputSchema: z.object({ query: z.string().max(200).default(''), limit: z.number().int().min(1).max(100).default(20), offset: z.number().int().min(0).default(0) }),

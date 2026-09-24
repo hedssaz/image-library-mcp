@@ -288,7 +288,7 @@ npm ci
 npm run build
 ```
 
-`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，Python/Docker 直接部署不需要 Node.js。Cloudflare 构建会自动重新生成卡片。更新 UI 时同时修改 `server.py` 中的 `IMAGE_VIEWER_URI` 和 `cloudflare/worker.ts` 中的 `VIEWER_URI` 版本，并保留旧消息引用的资源地址可读；在客户端刷新工具以加载新模板。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
+`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，Python/Docker 直接部署不需要 Node.js。Cloudflare 构建会自动重新生成卡片。更新 UI 后重新构建、部署并重启服务，资源地址固定为 `ui://image/viewer`，不随更新更名。客户端若仍缓存旧内容，可重新加载卡片或刷新连接器。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
 
 ## 运行测试
 

@@ -160,20 +160,19 @@ async def test_mcp_app_resource_and_tool_result(tmp_path):
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         tool = tools["show_image"]
         assert set(tool.inputSchema["properties"]) == {"name"}
-        assert tool.meta["ui"]["resourceUri"] == "ui://image/viewer-v6"
+        assert tool.meta["ui"]["resourceUri"] == "ui://image/viewer"
         assert tool.annotations.readOnlyHint and not tool.annotations.openWorldHint
         resources = (await client.list_resources()).resources
-        resource = next(item for item in resources if str(item.uri) == "ui://image/viewer-v6")
+        assert [str(item.uri) for item in resources] == ["ui://image/viewer"]
+        resource = resources[0]
         assert resource.mimeType == "text/html;profile=mcp-app"
-        result = await client.read_resource("ui://image/viewer-v6")
+        result = await client.read_resource("ui://image/viewer")
         content = result.contents[0]
         assert content.mimeType == "text/html;profile=mcp-app"
         assert content.meta["ui"]["csp"]["resourceDomains"] == [IMAGE_ORIGIN]
         assert content.meta["ui"]["prefersBorder"] is False
         assert '<img id="image"' in content.text and 'src="http' not in content.text
         assert TOKEN not in content.text
-        previous = await client.read_resource("ui://image/viewer-v5")
-        assert previous.contents[0].text == content.text
         added = await client.call_tool("add", {"name": "Viewer", "base64_data": encoded(), "aliases": ["风景"]})
         shown = await client.call_tool("show_image", {"name": "viewer"})
         assert not shown.isError

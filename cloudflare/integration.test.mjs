@@ -83,17 +83,13 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
       const tools = (await rpc('tools/list')).tools;
       assert.equal(tools.length, 6); for (const tool of tools) assert.ok(tool.outputSchema);
       assert.equal(tools.find(tool => tool.name === 'get')._meta?.ui, undefined);
-      assert.equal(tools.find(tool => tool.name === 'show_image')._meta.ui.resourceUri, 'ui://image/viewer-v6');
+      assert.equal(tools.find(tool => tool.name === 'show_image')._meta.ui.resourceUri, 'ui://image/viewer');
       const queryResponse = await fetch(`${origin}/mcp?token=${token}`, { method: 'POST', headers: { Accept: headers.Accept, 'Content-Type': headers['Content-Type'] }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'tools/list' }) });
       assert.equal(queryResponse.status, 200); await queryResponse.arrayBuffer();
-      const resources = (await rpc('resources/list')).resources; assert.deepEqual(resources.map(resource => resource.uri).sort(), ['ui://image/viewer-v5', 'ui://image/viewer-v6']);
-      const card = (await rpc('resources/read', { uri: 'ui://image/viewer-v6' })).contents[0];
+      const resources = (await rpc('resources/list')).resources; assert.deepEqual(resources.map(resource => resource.uri).sort(), ['ui://image/viewer']);
+      const card = (await rpc('resources/read', { uri: 'ui://image/viewer' })).contents[0];
       assert.equal(card.text, await readFile(join(root, 'viewer.html'), 'utf8'));
       assert.deepEqual(card._meta.ui.csp.resourceDomains, [origin]);
-      const previousCard = (await rpc('resources/read', { uri: 'ui://image/viewer-v5' })).contents[0];
-      assert.equal(previousCard.uri, 'ui://image/viewer-v5');
-      assert.equal(previousCard.text, card.text);
-      assert.deepEqual(previousCard._meta.ui.csp.resourceDomains, [origin]);
     });
     await t.test('official SDK client negotiates legacy and modern MCP', async () => {
       for (const mode of ['legacy', { pin: '2026-07-28' }]) {
