@@ -233,6 +233,34 @@ async def test_output_schemas_match_all_six_tool_results(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_search_matches_any_keyword_and_deduplicates(tmp_path):
+    async with connected(tmp_path) as (client, _):
+        for name, aliases, description in [
+            ("开心猫", [], ""),
+            ("猫咪", ["无语"], ""),
+            ("狗狗", [], "开心"),
+            ("一起开心", ["无语"], ""),
+            ("睡觉", [], "晚安"),
+        ]:
+            added = await client.call_tool("add", {
+                "name": name, "aliases": aliases, "description": description,
+                "base64_data": encoded(),
+            })
+            assert not added.isError
+
+        async def names(query, **page):
+            result = await client.call_tool("search", {"query": query, **page})
+            assert not result.isError
+            return [line[2:].split(" | ", 1)[0] for line in text(result).splitlines()]
+
+        expected = ["一起开心", "狗狗", "猫咪", "开心猫"]
+        assert await names("开心 无语") == expected
+        assert await names("开心 无语 开心") == expected
+        assert await names("开心 不存在") == ["一起开心", "狗狗", "开心猫"]
+        assert await names("开心 无语", limit=2, offset=1) == expected[1:3]
+
+
+@pytest.mark.asyncio
 async def test_search_duplicate_and_validation(tmp_path):
     async with connected(tmp_path) as (client, _):
         for name in ["Sample", "sample landscape", "户外"]:

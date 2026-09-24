@@ -223,7 +223,7 @@ class ImageLibrary:
                 "instr(fold(name || ' ' || aliases || ' ' || description), ?) > 0"
                 for _ in terms
             ]
-            where = " AND ".join(conditions)
+            where = " OR ".join(conditions)
         else:
             where = "1"
 
@@ -411,7 +411,8 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
     async def search(query: Annotated[str, Field(max_length=200)] = "",
                      limit: Annotated[int, Field(ge=1, le=100)] = 20,
                      offset: Annotated[int, Field(ge=0)] = 0) -> Annotated[CallToolResult, TextOutput]:
-        """搜索库内图片的名字、别名和描述；忽略大小写，空格分隔的词须全部匹配。
+        """搜索库内图片的名字、别名和描述；忽略大小写，空格分隔的多个词命中任意一个即可。
+        各关键词的匹配结果合并，同一张图片只返回一次。
         空 query 列出最新图片；用 limit/offset 翻页。返回：- 图片名字 | 别名/描述 | 公网图片链接。
         此工具仅返回文字列表；展示或发送表情包时，用选定结果的准确名字调用 show_image(name)。
         仅需读取原图 ImageContent 和外链、不展示卡片时，调用 get(name)。
