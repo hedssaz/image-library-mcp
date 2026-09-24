@@ -174,6 +174,11 @@ async def test_mcp_app_resource_and_tool_result(tmp_path):
         added = await client.call_tool("add", {"name": "Viewer", "base64_data": encoded(), "aliases": ["风景"]})
         shown = await client.call_tool("show_image", {"name": "viewer"})
         assert not shown.isError
+        assert [block.type for block in shown.content] == ["text", "image"]
+        assert shown.content[1].mimeType == "image/png"
+        assert base64.b64decode(shown.content[1].data, validate=True) == picture()
+        assert shown.content[1].data not in text(shown)
+        assert shown.content[1].data not in json.dumps(shown.structuredContent)
         assert text(shown) == text(added)
         assert shown.structuredContent == {"name": "Viewer", "url": text(added).rsplit(" | ", 1)[1],
                                            "width": 8, "height": 8}
@@ -184,8 +189,9 @@ async def test_mcp_app_resource_and_tool_result(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fmt,size", [("PNG", (600, 400)), ("JPEG", (80, 500)), ("GIF", (120, 80)), ("WEBP", (5, 5))])
-async def test_show_image_original_dimensions(tmp_path, fmt, size):
+@pytest.mark.parametrize("fmt,size,mime", [("PNG", (600, 400), "image/png"), ("JPEG", (80, 500), "image/jpeg"),
+                                           ("GIF", (120, 80), "image/gif"), ("WEBP", (5, 5), "image/webp")])
+async def test_show_image_original_dimensions(tmp_path, fmt, size, mime):
     output = io.BytesIO()
     Image.new("RGB", size, "red").save(output, fmt)
     async with connected(tmp_path) as (client, _):
@@ -193,6 +199,9 @@ async def test_show_image_original_dimensions(tmp_path, fmt, size):
         assert not added.isError
         default = await client.call_tool("show_image", {"name": fmt})
         assert not default.isError
+        assert default.content[1].type == "image"
+        assert default.content[1].mimeType == mime
+        assert base64.b64decode(default.content[1].data, validate=True) == output.getvalue()
         assert (default.structuredContent["width"], default.structuredContent["height"]) == size
         assert set(default.structuredContent) == {"name", "url", "width", "height"}
 

@@ -290,11 +290,7 @@ class ImageLibrary:
         )
 
     def show_image(self, name: str) -> CallToolResult:
-        row = self._get_by_name(name)
-        return CallToolResult(
-            content=[TextContent(type="text", text=self.line(row))],
-            structuredContent=self.image_info(row),
-        )
+        return self.get(name)
 
 
 class MCPGuard:
@@ -379,8 +375,8 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
         "Image Library", stateless_http=True, json_response=True,
         streamable_http_path=endpoint.path,
         instructions="先 search 搜索图片列表；要在聊天里显示或发送图片，调用 show_image(准确图片名字)，"
-                     "由 MCP App 内联显示图片，不需要另写 Markdown 图片。"
-                     "需要读取原图内容和外链时使用 get，它直接提供 ImageContent。"
+                     "由 MCP App 内联显示图片，同时返回 ImageContent 供模型读取，无需另调 get 或另写 Markdown 图片。"
+                     "仅需读取原图内容和外链、不展示卡片时使用 get。"
                      "添加时 URL 与 Base64 二选一。别名和删除使用准确图片名字。",
         transport_security=TransportSecuritySettings(
             allowed_hosts=[endpoint.raw_authority, "127.0.0.1:*", "localhost:*", "[::1]:*"],
@@ -406,7 +402,8 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
     async def show_image(name: Name) -> Annotated[CallToolResult, ImageOutput]:
         """在聊天中展示或发送表情包时调用本工具，由 MCP App 直接显示图片。
         name 使用 search 返回的准确名字；无需先调用 get 或另写 Markdown 图片。
-        返回图片外链、名字和原始 width/height；UI 按配置的期望尺寸及宿主空间等比例缩小，不放大小图。
+        同时返回原图 ImageContent（Base64、真实 MIME）供模型读取，以及图片外链、名字和原始 width/height。
+        UI 按配置的期望尺寸及宿主空间等比例缩小，不放大小图。
         """
         return await asyncio.to_thread(library.show_image, clean(name))
 
@@ -417,7 +414,7 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
         """搜索库内图片的名字、别名和描述；忽略大小写，空格分隔的词须全部匹配。
         空 query 列出最新图片；用 limit/offset 翻页。返回：- 图片名字 | 别名/描述 | 公网图片链接。
         此工具仅返回文字列表；展示或发送表情包时，用选定结果的准确名字调用 show_image(name)。
-        需要读取原图 ImageContent 和外链时，才调用 get(name)。
+        仅需读取原图 ImageContent 和外链、不展示卡片时，调用 get(name)。
         """
         result = await asyncio.to_thread(library.search, query, limit, offset)
         return text_result(result)
@@ -425,7 +422,7 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path) ->
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False), structured_output=True)
     async def get(name: Name) -> Annotated[CallToolResult, ImageOutput]:
         """按 search 返回的准确图片名字获取一张图片，不按别名或模糊关键词选择。
-        用于读取原图内容；在聊天中展示或发送表情包请调用 show_image(name)。
+        用于只读取原图内容、不展示卡片；需要展示并读取图片时调用 show_image(name)。
         同时返回文字说明（名字、别名/描述、可公开访问的外链）和原图 ImageContent（Base64、真实 MIME）。
         直接读取库内原图，无需客户端再下载外链；图片 Base64 只在 image 内容块中，不作为文字返回。
         """

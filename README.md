@@ -162,8 +162,8 @@ Authorization: Bearer <MCP_TOKEN>
 | --- | --- |
 | `add(name, url 或 base64_data, aliases=[], description="")` | 添加表情包；链接与 Base64 二选一 |
 | `search(query="", limit=20, offset=0)` | 按名称、别名和描述搜索表情包；空查询列出表情包 |
-| `get(name)` | 返回原图 ImageContent、外链及原始宽高 |
-| `show_image(name)` | 在支持 MCP Apps 的客户端中直接展示表情包 |
+| `get(name)` | 返回原图 ImageContent、外链及原始宽高，不挂载卡片 |
+| `show_image(name)` | 用 MCP App 展示表情包，同时返回原图 ImageContent 供模型读取 |
 | `addalias(name, aliases)` | 为指定表情包添加别名，如“开心”“无语” |
 | `delete(name)` | 删除指定表情包及其别名 |
 
@@ -178,7 +178,7 @@ Authorization: Bearer <MCP_TOKEN>
 }
 ```
 
-添加后，可以在连接了这个 MCP 的客户端中说：“给我发一张开心的表情包。”工具流程是 `search(query="开心")` → `show_image(name="开心大笑")`。需要原图内容和外链时，使用 `get(name="开心大笑")`。
+添加后，可以在连接了这个 MCP 的客户端中说：“给我发一张开心的表情包。”工具流程是 `search(query="开心")` → `show_image(name="开心大笑")`。同一次展示调用同时返回图片内容，模型无需再调用 `get`。仅需读取原图和外链、不展示卡片时，使用 `get(name="开心大笑")`。
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词须全部命中。`limit` 为 1–100。其他工具使用准确图片名称。
 
