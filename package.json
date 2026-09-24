@@ -10,7 +10,8 @@
     "db:local": "wrangler d1 migrations apply DB --local",
     "check": "wrangler types cloudflare/runtime.d.ts --include-env false && tsc",
     "test:cloudflare": "node --test cloudflare/integration.test.mjs",
-    "build:worker": "npm run build && wrangler deploy --dry-run --outdir dist"
+    "build:worker": "npm run build && wrangler deploy --dry-run --outdir dist",
+    "test:ui": "node --test tests/viewer.test.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "2.0.0",

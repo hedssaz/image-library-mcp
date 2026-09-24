@@ -31,7 +31,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from yarl import URL
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-IMAGE_VIEWER_URI = "ui://image/viewer-v5"
+IMAGE_VIEWER_URI = "ui://image/viewer-v6"
 MAX_REQUEST_BYTES = 4 * ((MAX_IMAGE_BYTES + 2) // 3) + 64 * 1024
 FORMATS = {"PNG": ("png", "image/png"), "JPEG": ("jpg", "image/jpeg"),
            "GIF": ("gif", "image/gif"), "WEBP": ("webp", "image/webp")}
@@ -405,6 +405,14 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path,
     )
     def image_viewer() -> str:
         return viewer_html
+
+    # Keep the previously published URI readable for existing conversation cards.
+    mcp.resource(
+        "ui://image/viewer-v5", name="image_viewer_previous", title="图片",
+        mime_type="text/html;profile=mcp-app",
+        meta={"ui": {"csp": {"resourceDomains": [str(image_origin.origin())]},
+                     "prefersBorder": False}},
+    )(image_viewer)
 
     @mcp.tool(
         title="显示图片",

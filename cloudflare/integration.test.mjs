@@ -83,13 +83,17 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
       const tools = (await rpc('tools/list')).tools;
       assert.equal(tools.length, 6); for (const tool of tools) assert.ok(tool.outputSchema);
       assert.equal(tools.find(tool => tool.name === 'get')._meta?.ui, undefined);
-      assert.equal(tools.find(tool => tool.name === 'show_image')._meta.ui.resourceUri, 'ui://image/viewer-v5');
+      assert.equal(tools.find(tool => tool.name === 'show_image')._meta.ui.resourceUri, 'ui://image/viewer-v6');
       const queryResponse = await fetch(`${origin}/mcp?token=${token}`, { method: 'POST', headers: { Accept: headers.Accept, 'Content-Type': headers['Content-Type'] }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'tools/list' }) });
       assert.equal(queryResponse.status, 200); await queryResponse.arrayBuffer();
-      const resources = (await rpc('resources/list')).resources; assert.equal(resources.length, 1);
-      const card = (await rpc('resources/read', { uri: 'ui://image/viewer-v5' })).contents[0];
+      const resources = (await rpc('resources/list')).resources; assert.deepEqual(resources.map(resource => resource.uri).sort(), ['ui://image/viewer-v5', 'ui://image/viewer-v6']);
+      const card = (await rpc('resources/read', { uri: 'ui://image/viewer-v6' })).contents[0];
       assert.equal(card.text, await readFile(join(root, 'viewer.html'), 'utf8'));
       assert.deepEqual(card._meta.ui.csp.resourceDomains, [origin]);
+      const previousCard = (await rpc('resources/read', { uri: 'ui://image/viewer-v5' })).contents[0];
+      assert.equal(previousCard.uri, 'ui://image/viewer-v5');
+      assert.equal(previousCard.text, card.text);
+      assert.deepEqual(previousCard._meta.ui.csp.resourceDomains, [origin]);
     });
     await t.test('official SDK client negotiates legacy and modern MCP', async () => {
       for (const mode of ['legacy', { pin: '2026-07-28' }]) {
@@ -185,7 +189,7 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
   }
 });
 
-test('viewer keeps aspect ratio, small-image size, rounded corners and one height report', async () => {
+test('viewer keeps aspect ratio, small-image size, rounded corners and reports only changed heights', async () => {
   const source = (await readFile(join(root, 'ui/viewer.js'), 'utf8')).replace(/^import .*;\n/, '');
   const image = { style: {}, removeAttribute() {} }, status = {};
   const reports = []; let app;
@@ -194,8 +198,11 @@ test('viewer keeps aspect ratio, small-image size, rounded corners and one heigh
   app.ontoolresult({ structuredContent: { name: 'wide', url: 'https://example.com/a', width: 300, height: 100 } });
   assert.equal(image.style.maxWidth, 'min(100%, 150px)'); assert.equal(image.style.maxHeight, 'min(100%, 50px)'); assert.equal(reports.length, 1); assert.equal(reports[0].height, 50); assert.equal(reports[0].width, undefined);
   app.ontoolresult({ structuredContent: { name: 'small', url: 'https://example.com/b', width: 10, height: 7 } });
-  assert.equal(image.style.maxWidth, 'min(100%, 10px)'); assert.equal(reports.length, 1);
-  assert.equal(app.onhostcontextchanged, undefined);
+  assert.equal(image.style.maxWidth, 'min(100%, 10px)'); assert.equal(reports.length, 2);
+  assert.equal(reports[1].height, 7);
+  app.onhostcontextchanged({ containerDimensions: { height: 0 } });
+  app.onhostcontextchanged({ containerDimensions: { maxWidth: 300, height: 7 } });
+  assert.equal(reports.length, 2);
   const html = await readFile(join(root, 'viewer.html'), 'utf8'); assert.match(html, /border-radius: 8px/); assert.match(html, /padding-inline-start: 1.3em/);
 });
 
