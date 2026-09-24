@@ -249,3 +249,7 @@ npm run build
 .venv/bin/pip install pytest==9.0.3 pytest-asyncio==1.4.0
 .venv/bin/python -m pytest -q tests
 ```
+
+## 安全提醒
+
+当前没有 SSRF 防护，URL 下载可能访问服务器本机或内网资源。建议仅自用或供受信任的用户使用，不要作为面向公众的服务开放；令牌鉴权不能代替 SSRF 防护。
