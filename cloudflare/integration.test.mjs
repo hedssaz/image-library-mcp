@@ -134,6 +134,21 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
       await call('get', { name: 'NEW' }, true);
       await call('search', { limit: 0 }, true);
     });
+    await t.test('199-character query with 100 keywords keeps OR results unique and globally paginated', async () => {
+      const terms = Array.from({ length: 100 }, (_, index) => String.fromCharCode(0x4e00 + index));
+      const query = terms.join(' ');
+      assert.equal(query.length, 199);
+      await call('add', { name: 'many-terms-first', aliases: [terms[0], terms[99]], base64_data: fixtures[0].base64 });
+      await call('add', { name: 'many-terms-second', description: terms[50], base64_data: fixtures[0].base64 });
+      const lines = (await call('search', { query })).structuredContent.text.split('\n');
+      assert.equal(lines.length, 2); assert.equal(new Set(lines).size, 2);
+      assert.match(lines[0], /^- many-terms-second \|/);
+      assert.match(lines[1], /^- many-terms-first \|/);
+      for (let offset = 0; offset < lines.length; offset++) {
+        assert.equal((await call('search', { query, limit: 1, offset })).structuredContent.text, lines[offset]);
+      }
+      assert.equal((await call('search', { query, limit: 1, offset: 2 })).structuredContent.text, '没有找到匹配的图片。');
+    });
     await t.test('URL fetch, redirects, streaming limit and total timeout', async () => {
       await call('add', { name: 'download', url: `${sourceURL}/redirect/5` });
       assert.equal((await call('get', { name: 'download' })).content[1].data, fixtures[0].base64);
@@ -189,15 +204,24 @@ test('viewer keeps aspect ratio, small-image size, rounded corners and reports o
   const source = (await readFile(join(root, 'ui/viewer.js'), 'utf8')).replace(/^import .*;\n/, '');
   const image = { style: {}, removeAttribute() {} }, status = {};
   const reports = []; let app;
-  class App { constructor(_info, _caps, options) { assert.equal(options.autoResize, false); app = this; } getHostContext() { return { containerDimensions: { maxWidth: 300, maxHeight: 300 } }; } sendSizeChanged(size) { reports.push(size); return Promise.resolve(); } connect() { return Promise.resolve(); } }
-  vm.runInNewContext(source, { App, document: { getElementById: id => id === 'image' ? image : status }, console });
+  let context = { containerDimensions: { maxWidth: 300, maxHeight: 300 } };
+  class App { constructor(_info, _caps, options) { assert.equal(options.autoResize, false); app = this; } getHostContext() { return context; } sendSizeChanged(size) { reports.push(size); return Promise.resolve(); } connect() { return Promise.resolve(); } }
+  vm.runInNewContext(source, {
+    App, document: { documentElement: { clientWidth: 300 }, getElementById: id => id === 'image' ? image : id === 'status' ? status : {} },
+    console, setTimeout, clearTimeout,
+    getComputedStyle: () => ({ paddingLeft: '18.2px', paddingRight: '0px' }),
+    window: { addEventListener() {} },
+  });
+  await Promise.resolve();
   app.ontoolresult({ structuredContent: { name: 'wide', url: 'https://example.com/a', width: 300, height: 100 } });
   assert.equal(image.style.maxWidth, 'min(100%, 150px)'); assert.equal(image.style.maxHeight, 'min(100%, 50px)'); assert.equal(reports.length, 1); assert.equal(reports[0].height, 50); assert.equal(reports[0].width, undefined);
   app.ontoolresult({ structuredContent: { name: 'small', url: 'https://example.com/b', width: 10, height: 7 } });
   assert.equal(image.style.maxWidth, 'min(100%, 10px)'); assert.equal(reports.length, 2);
   assert.equal(reports[1].height, 7);
-  app.onhostcontextchanged({ containerDimensions: { height: 0 } });
-  app.onhostcontextchanged({ containerDimensions: { maxWidth: 300, height: 7 } });
+  context = { containerDimensions: { height: 0 } };
+  app.onhostcontextchanged(context);
+  context = { containerDimensions: { maxWidth: 300, height: 7 } };
+  app.onhostcontextchanged(context);
   assert.equal(reports.length, 2);
   const html = await readFile(join(root, 'viewer.html'), 'utf8'); assert.match(html, /border-radius: 8px/); assert.match(html, /padding-inline-start: 1.3em/);
 });

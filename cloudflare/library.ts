@@ -100,9 +100,10 @@ export class ImageLibrary {
   }
   async search(query: string, limit: number, offset: number) {
     const terms = clean(fold(query)).split(' ').filter(Boolean);
-    const where = terms.length ? terms.map(() => 'instr(search_fold, ?) > 0').join(' OR ') : '1';
+    // D1 allows at most 100 bind parameters; keep every keyword in one JSON value.
+    const where = terms.length ? 'EXISTS (SELECT 1 FROM json_each(?) AS term WHERE instr(search_fold, term.value) > 0)' : '1';
     const { results } = await this.env.DB.prepare(`SELECT * FROM images WHERE ${where} ORDER BY (name_fold = ?) DESC, rowid DESC LIMIT ? OFFSET ?`)
-      .bind(...terms, fold(clean(query)), limit, offset).all<Row>();
+      .bind(...(terms.length ? [JSON.stringify(terms)] : []), fold(clean(query)), limit, offset).all<Row>();
     return textResult(results.length ? results.map(row => this.line(row)).join('\n') : '没有找到匹配的图片。');
   }
   async add(name: string, aliases: string[], description: string, data: Uint8Array) {
