@@ -250,6 +250,10 @@ npm run build
 .venv/bin/python -m pytest -q tests
 ```
 
+## 许可证
+
+本项目代码采用 [MIT 许可证](LICENSE)。第三方依赖及构建产物中的第三方代码遵循各自的许可证，详见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。
+
 ## 安全提醒
 
 当前没有 SSRF 防护，URL 下载可能访问服务器本机或内网资源。建议仅自用或供受信任的用户使用，不要作为面向公众的服务开放；令牌鉴权不能代替 SSRF 防护。
