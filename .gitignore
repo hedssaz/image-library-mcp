@@ -13,3 +13,9 @@ node_modules/
 *.db-*
 *.log
 .DS_Store
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+dist/
+cloudflare/runtime.d.ts

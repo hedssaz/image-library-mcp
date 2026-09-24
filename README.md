@@ -2,16 +2,23 @@
 
 让 AI 在聊天中搜索、发送你自己的表情包。通过链接或 Base64 添加表情包，再用“开心”“无语”“吵架”等名字、别名或描述搜索；支持 MCP Apps 的客户端可以直接在聊天里展示选中的表情包。
 
-表情包原图和元数据保存在 SQLite 中，每张图都有可公开访问的外链。项目不附带图库，部署后按需添加自己的表情包。
+Python/Docker 方式将表情包原图和元数据保存在 SQLite；Cloudflare 方式使用 D1 保存元数据、R2 保存原图。每张图都有可公开访问的外链。项目不附带图库，部署后按需添加自己的表情包。
 
 ## 选择运行方式
 
-两种方式任选其一：
+三种方式任选其一：
 
+- **Cloudflare 部署**：无需 VPS 或自备域名，部署后使用 `*.workers.dev/mcp`，详见 [Cloudflare 部署指南](docs/cloudflare-deployment.md)。
 - **Docker 部署**：使用项目自带的 Caddy 配置 HTTPS，适合服务器的 80、443 端口尚未被占用的情况。
 - **直接运行 Python**：可仅在本机测试，也可配合已有的 Nginx 对外提供 HTTPS，适合服务器上已经部署其他项目的情况。
 
-对外部署默认只用一个域名，例如 `example.com`：MCP 地址是 `https://example.com/mcp`，图片地址是 `https://example.com/images/<文件名>`。只需将这个域名解析到服务器，无需配置 `api`、`images` 子域名或泛域名解析。
+Docker/Python 对外部署默认只用一个域名，例如 `example.com`：MCP 地址是 `https://example.com/mcp`，图片地址是 `https://example.com/images/<文件名>`。只需将这个域名解析到服务器，无需配置 `api`、`images` 子域名或泛域名解析。
+
+## Cloudflare 部署
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/hedssaz/image-library-mcp/tree/main)
+
+需要 Cloudflare/GitHub 账户、开通 R2，并填写自己的 `MCP_TOKEN`。绑定与初始化、连接、更新、备份及验证范围见 [Cloudflare 部署指南](docs/cloudflare-deployment.md)。
 
 ## 方式一：Docker 部署
 
@@ -182,7 +189,7 @@ Authorization: Bearer <MCP_TOKEN>
 
 服务端环境变量 `SHOW_IMAGE_CONTENT` 默认是 `true`。设为 `false` 后，`show_image` 仍展示卡片并返回文字、外链和宽高，但不再附带原图 `ImageContent`；`get` 始终返回原图。这个开关不是 MCP 调用参数。
 
-Docker 部署时在 `.env` 中设置 `SHOW_IMAGE_CONTENT=false`，再执行 `docker compose up -d`；直接运行 Python 时设置 `export SHOW_IMAGE_CONTENT=false`，或写入 systemd 的环境文件，然后重启服务。设回 `true` 即可开启。
+Cloudflare 部署时修改 `wrangler.jsonc` 并重新部署，详见[部署指南](docs/cloudflare-deployment.md)。Docker 部署时在 `.env` 中设置 `SHOW_IMAGE_CONTENT=false`，再执行 `docker compose up -d`；直接运行 Python 时设置 `export SHOW_IMAGE_CONTENT=false`，或写入 systemd 的环境文件，然后重启服务。设回 `true` 即可开启。
 
 搜索采用文字包含匹配，忽略大小写；空格分隔的多个词命中任意一个即可。例如 `开心 无语` 会返回匹配“开心”或“无语”的表情包，同一张只返回一次。`limit`（1–100）和 `offset` 对合并后的结果分页。其他工具使用准确图片名称。
 
@@ -244,7 +251,7 @@ npm ci
 npm run build
 ```
 
-`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，直接部署不需要 Node.js。更新 UI 后重新构建、部署并重启服务，资源地址固定为 `ui://image/viewer`，不随更新更名。客户端若仍缓存旧内容，可重新加载卡片或刷新连接器。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
+`viewer.html` 是自动生成的压缩产物，请修改 `ui/viewer.js` 或 `ui/build.mjs`，不要直接编辑它。已附带构建好的版本，Python/Docker 直接部署不需要 Node.js；Cloudflare 构建会自动重新生成卡片。更新 UI 后重新构建、部署并重启服务，资源地址固定为 `ui://image/viewer`，不随更新更名。客户端若仍缓存旧内容，可重新加载卡片或刷新连接器。构建产物的第三方许可见 `THIRD_PARTY_NOTICES.txt`。
 
 ## 运行测试
 

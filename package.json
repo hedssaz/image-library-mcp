@@ -5,10 +5,50 @@
   "type": "module",
   "scripts": {
     "build": "node ui/build.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "check": "wrangler types cloudflare/runtime.d.ts --include-env false && tsc",
+    "test:cloudflare": "node --test cloudflare/integration.test.mjs",
+    "build:worker": "npm run build && wrangler deploy --dry-run --outdir dist",
     "test:ui": "node --test tests/viewer.test.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "2.0.0",
-    "esbuild": "0.28.2"
+    "@types/node": "22.20.4",
+    "@types/omggif": "1.0.5",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "wrangler": "4.138.0",
+    "@modelcontextprotocol/client": "2.0.0"
+  },
+  "dependencies": {
+    "@jsquash/webp": "1.5.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "agents": "0.24.0",
+    "fast-png": "8.0.0",
+    "jpeg-js": "0.4.4",
+    "omggif": "1.0.10",
+    "unicode-case-folding": "1.1.1",
+    "zod": "4.6.5"
+  },
+  "cloudflare": {
+    "bindings": {
+      "MCP_TOKEN": {
+        "description": "Required: generate your own ASCII token (at least 32 characters), e.g. `openssl rand -hex 32`. Used as the MCP Bearer token."
+      },
+      "SHOW_IMAGE_CONTENT": {
+        "description": "`true` returns original ImageContent with show_image; `false` returns only card data and links. get always returns the original."
+      },
+      "DB": {
+        "description": "D1 database for image names, aliases, descriptions and dimensions. Created automatically; keep the default deploy command to apply migrations."
+      },
+      "IMAGES": {
+        "description": "R2 bucket for original image bytes. Enable R2 in your own account before deploying; review Cloudflare billing terms."
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }
