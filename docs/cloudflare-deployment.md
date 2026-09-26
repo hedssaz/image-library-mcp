@@ -110,6 +110,6 @@ npm run build:worker
 
 Worker 使用 TypeScript、无状态 `createMcpHandler` 和 MCP SDK v2。现有 Python 服务使用线程和 SQLite 文件，而 [Python Workers 线程不可用、文件系统不持久](https://developers.cloudflare.com/workers/languages/python/stdlib/)，因此保留独立实现，没有套用已弃用的 McpAgent 模板。
 
-所有图片完整解码验证后保存原始字节，不做服务端缩图或替换；卡片的 150px 仅是显示上限。支持 PNG/JPEG/GIF/WebP、单图最多 10 MiB、最多 500 帧、累计 1 亿像素。Workers CPU/内存及 D1/R2 配额仍受套餐限制，大图或长动图可能超出免费 Workers 的 CPU 配额；详见 [Workers 运行限制](https://developers.cloudflare.com/workers/platform/limits/)。
+所有图片完整解码验证后保存原始字节，不做服务端缩图或替换；卡片的 150px 仅是显示上限。支持 PNG/JPEG/GIF/WebP、单图最多 10 MiB、单帧画布最多 200 万像素、最多 500 帧、累计 1 亿像素。画布限制在解码前检查，避免高压缩大图展开时超过 Workers 每个 isolate 共享的 128 MB 内存；它仍需容纳 JS、WASM、输入及并发请求，不能保证极端并发或异常文件一定不会触发内存限制。大图或长动图也可能超出免费 Workers 的 CPU 配额；详见 [Workers 运行限制](https://developers.cloudflare.com/workers/platform/limits/)。
 
 URL 下载没有 SSRF 防护，只适合自用或受信任的用户，详见[安全提醒](../README.md#安全提醒)。

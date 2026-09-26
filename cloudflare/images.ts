@@ -8,8 +8,15 @@ import webpWasm from '@jsquash/webp/codec/dec/webp_dec.wasm';
 const invalid = () => new Error('无法读取图片，文件可能损坏或尺寸过大。');
 function check(ok: unknown): asserts ok { if (!ok) throw invalid(); }
 const text = (bytes: Uint8Array, start: number, end: number) => String.fromCharCode(...bytes.subarray(start, end));
+// Workers share 128 MB per isolate across the JS heap, WASM and concurrent requests.
+// A single decode can hold several expanded copies (PNG scanlines/frames, JPEG
+// components, GIF canvas + indices, or libwebp's WASM + JS output). Keep one
+// canvas at <= 2 MP (8 MiB RGBA) and retain the separate animation work cap.
+const MAX_CANVAS_PIXELS = 2_000_000;
+const MAX_TOTAL_PIXELS = 100_000_000;
 function budget(width: number, height: number, frames: number) {
-  check(width > 0 && height > 0 && frames > 0 && frames <= 500 && width * height * frames <= 100_000_000);
+  check(width > 0 && height > 0 && frames > 0 && frames <= 500 &&
+    width * height <= MAX_CANVAS_PIXELS && width * height * frames <= MAX_TOTAL_PIXELS);
 }
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff;
@@ -57,6 +64,8 @@ function png(data: Buffer) {
     offset = end;
   }
   check(ended && idat && frames.length === declared);
+  // fast-png's decode() processes the default PNG image; APNG frames are
+  // reconstructed and decoded one at a time below.
   decodePNG(data, { checkCrc: true });
   for (const frame of frames) {
     check(frame.parts.length);
@@ -110,6 +119,32 @@ function gif(data: Buffer) {
 }
 let webpReady: Promise<void> | undefined;
 const u24 = (data: Buffer, offset: number) => data.readUIntLE(offset, 3);
+function webpBitstreamSize(kind: string, data: Buffer, start: number, length: number) {
+  if (kind === 'VP8 ') {
+    check(length >= 10 && text(data, start + 3, start + 6) === '\x9d\x01\x2a');
+    return { width: data.readUInt16LE(start + 6) & 0x3fff, height: data.readUInt16LE(start + 8) & 0x3fff };
+  }
+  check(kind === 'VP8L' && length >= 5 && data[start] === 0x2f);
+  const bits = data.readUInt32LE(start + 1);
+  return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+}
+function checkWebpFrame(data: Buffer, width: number, height: number) {
+  let found = false;
+  for (let offset = 0; offset < data.length;) {
+    check(offset + 8 <= data.length);
+    const kind = text(data, offset, offset + 4), length = data.readUInt32LE(offset + 4);
+    const start = offset + 8, end = start + length;
+    check(end + length % 2 <= data.length);
+    if (kind === 'VP8 ' || kind === 'VP8L') {
+      const size = webpBitstreamSize(kind, data, start, length);
+      budget(size.width, size.height, 1);
+      check(size.width === width && size.height === height);
+      found = true;
+    }
+    offset = end + length % 2;
+  }
+  check(found);
+}
 async function webp(data: Buffer) {
   check(data.length >= 20 && text(data, 0, 4) === 'RIFF' && text(data, 8, 12) === 'WEBP');
   check(data.readUInt32LE(4) + 8 === data.length);
@@ -123,17 +158,17 @@ async function webp(data: Buffer) {
     if (kind === 'VP8X') {
       check(length === 10); animated = Boolean(data[start] & 2);
       width = u24(data, start + 4) + 1; height = u24(data, start + 7) + 1; budget(width, height, 1);
-    } else if (kind === 'VP8 ' && !width) {
-      check(length >= 10 && text(data, start + 3, start + 6) === '\x9d\x01\x2a');
-      width = data.readUInt16LE(start + 6) & 0x3fff; height = data.readUInt16LE(start + 8) & 0x3fff;
-    } else if (kind === 'VP8L' && !width) {
-      check(length >= 5 && data[start] === 0x2f);
-      const bits = data.readUInt32LE(start + 1); width = (bits & 0x3fff) + 1; height = ((bits >>> 14) & 0x3fff) + 1;
+    } else if (kind === 'VP8 ' || kind === 'VP8L') {
+      const size = webpBitstreamSize(kind, data, start, length);
+      budget(size.width, size.height, 1);
+      if (width) check(size.width === width && size.height === height);
+      else { width = size.width; height = size.height; }
     } else if (kind === 'ANMF') {
       check(animated && length >= 16);
       const w = u24(data, start + 6) + 1, h = u24(data, start + 9) + 1;
       check(u24(data, start) * 2 + w <= width && u24(data, start + 3) * 2 + h <= height);
       const chunks = data.subarray(start + 16, end);
+      checkWebpFrame(chunks, w, h);
       // Convert each animation frame into a standalone WebP for libwebp's full pixel decode.
       const extended = Buffer.alloc(18); extended.write('VP8X'); extended.writeUInt32LE(10, 4);
       extended[8] = 0x10; extended.writeUIntLE(w - 1, 12, 3); extended.writeUIntLE(h - 1, 15, 3);
@@ -163,7 +198,10 @@ export async function validateImage(bytes: Uint8Array) {
     if (text(data, 0, 3) === 'GIF') return gif(data);
     if (text(data, 0, 4) === 'RIFF') return await webp(data);
     if (data[0] === 0xff && data[1] === 0xd8) {
-      const result = jpeg.decode(data, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: 100, maxMemoryUsageInMB: 96 });
+      // jpeg-js checks maxResolutionInMP while parsing SOF, before allocating
+      // component planes or the RGBA output. The memory cap also covers its
+      // internal allocations, which can exceed one RGBA canvas.
+      const result = jpeg.decode(data, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: MAX_CANVAS_PIXELS / 1_000_000, maxMemoryUsageInMB: 48 });
       budget(result.width, result.height, 1);
       return { width: result.width, height: result.height, extension: 'jpg', mime: 'image/jpeg' };
     }
