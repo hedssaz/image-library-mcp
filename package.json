@@ -10,6 +10,7 @@
     "db:local": "wrangler d1 migrations apply DB --local",
     "check": "wrangler types cloudflare/runtime.d.ts --include-env false && tsc",
     "test:cloudflare": "node --test cloudflare/integration.test.mjs",
+    "test:images": "node --test cloudflare/images.test.mjs",
     "build:worker": "npm run build && wrangler deploy --dry-run --outdir dist",
     "test:ui": "node --test tests/viewer.test.mjs"
   },

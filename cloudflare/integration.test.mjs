@@ -8,10 +8,38 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import vm from 'node:vm';
+import { deflateSync } from 'node:zlib';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { GifReader } from 'omggif';
 import { build } from 'esbuild';
 const fixtures = JSON.parse(await readFile(new URL('./fixtures.json', import.meta.url)));
+function pngChunk(type, payload) {
+  const bytes = Buffer.alloc(12 + payload.length);
+  bytes.writeUInt32BE(payload.length); bytes.write(type, 4); payload.copy(bytes, 8);
+  let crc = 0xffffffff;
+  for (const byte of bytes.subarray(4, -4)) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  bytes.writeUInt32BE((crc ^ 0xffffffff) >>> 0, bytes.length - 4);
+  return bytes;
+}
+function compressedPng(width, height) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width); header.writeUInt32BE(height, 4);
+  header[8] = 8; header[9] = 0; // grayscale, one byte per pixel
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(Buffer.alloc((width + 1) * height))), pngChunk('IEND', Buffer.alloc(0))]);
+}
+function oversizedJpeg() {
+  const bytes = Buffer.from(fixtures.find(x => x.name === 'jpeg').base64, 'base64');
+  for (let i = 0; i < bytes.length - 9; i++) {
+    if (bytes[i] === 0xff && [0xc0, 0xc1, 0xc2].includes(bytes[i + 1])) {
+      bytes.writeUInt16BE(10_000, i + 5); bytes.writeUInt16BE(10_000, i + 7); return bytes;
+    }
+  }
+  throw new Error('JPEG fixture has no SOF marker');
+}
 const token = 'local-integration-token-not-a-secret-123456789';
 const root = new URL('../', import.meta.url).pathname;
 const wrangler = join(root, 'node_modules/wrangler/bin/wrangler.js');
@@ -116,6 +144,28 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
         assert.equal((await fetch(get.structuredContent.url, { headers: { 'If-None-Match': head.headers.get('ETag') } })).status, 304);
         const show = await call('show_image', { name: fixture.name }); assert.equal(show.content[1].data, fixture.base64);
       }
+    });
+    await t.test('highly compressed oversized canvases fail validation without killing the Worker', async () => {
+      const png = compressedPng(10_000, 10_000);
+      assert.ok(png.length < 1024 * 1024); // 100 MP, despite a tiny input
+      const gif = Buffer.from(fixtures.find(x => x.name === 'animated-gif').base64, 'base64');
+      gif.writeUInt16LE(10_000, 6); gif.writeUInt16LE(10_000, 8);
+      const webp = Buffer.from(fixtures.find(x => x.name === 'animated-webp').base64, 'base64');
+      for (let offset = 12; offset < webp.length;) {
+        const length = webp.readUInt32LE(offset + 4);
+        if (webp.toString('ascii', offset, offset + 4) === 'VP8X') {
+          webp.writeUIntLE(9_999, offset + 12, 3); webp.writeUIntLE(9_999, offset + 15, 3); break;
+        }
+        offset += 8 + length + length % 2;
+      }
+      for (const [format, bytes] of [['png', png], ['jpeg', oversizedJpeg()], ['gif', gif], ['webp', webp]]) {
+        const result = await call('add', { name: `oversized-${format}`, base64_data: bytes.toString('base64') }, true);
+        assert.match(result.content[0].text, /尺寸过大|无法读取图片/);
+        assert.equal((await fetch(`${origin}/health`)).status, 200);
+      }
+      const normal = compressedPng(1024, 1024);
+      await call('add', { name: 'compressed-normal', base64_data: normal.toString('base64') });
+      assert.equal((await call('get', { name: 'compressed-normal' })).structuredContent.width, 1024);
     });
     await t.test('OR contains search, full Unicode folding, exact-name priority, paging and aliases', async () => {
       for (const [name, aliases, description] of [['Straße', ['开心', 'ＫＥＬＶＩＮ'], 'first'], ['Other', ['无语', '开心'], 'second'], ['开心', [], 'third']])
