@@ -21,6 +21,8 @@ python3 -m venv .venv
 
 把 `my-cat-2026` 换成自己好记的 key。英文、数字、英文符号都可以，不要留空或含空格、中文；不要求 32 位，也不需要运行生成命令。
 
+保留命令里的外层单引号，`$`、反斜杠、双引号等字符在其中原样填写。**如果 key 含单引号 `'`，把每个单引号替换成 `'"'"'`**，例如 `cat's-key` 应写成 `export MCP_TOKEN='cat'"'"'s-key'`。客户端始终填写原始 key，不加引号或转义字符。
+
 ```bash
 export MCP_URL=http://127.0.0.1:8000/mcp
 export PUBLIC_BASE_URL=http://127.0.0.1:8000
@@ -70,7 +72,7 @@ export MCP_TOKEN='my-cat-2026'
 .venv/bin/uvicorn server:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-key 可以自己填写，例如 `my-cat-2026`。重启时复用同一个令牌，客户端就无需重新配置。若本机 `8000` 端口已被占用，修改启动命令的 `--port`，并同步修改下方两处 `proxy_pass` 的端口；公网 URL 不变。
+key 可以自己填写，例如 `my-cat-2026`，特殊符号按[上面的引用规则](#2-启动)处理。重启时复用同一个令牌，客户端就无需重新配置。若本机 `8000` 端口已被占用，修改启动命令的 `--port`，并同步修改下方两处 `proxy_pass` 的端口；公网 URL 不变。
 
 下面是独立 Nginx 站点的配置示例。替换域名和证书路径后，放入现有 Nginx 的站点配置目录（例如 `/etc/nginx/conf.d/image-library.conf`，须由主配置在 `http` 块内加载）：
 

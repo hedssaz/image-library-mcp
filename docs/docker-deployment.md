@@ -38,13 +38,24 @@ cp .env.example .env
 
 ```dotenv
 DOMAIN=example.com
-MCP_TOKEN=my-cat-2026
+MCP_TOKEN="my-cat-2026"
 SHOW_IMAGE_CONTENT=true
 ```
 
 - `DOMAIN`：换成你的域名，只填域名，不加 `https://` 或 `/mcp`。
 - `MCP_TOKEN`：自己填一个熟悉的 key。英文、数字、英文符号都可以，不要留空或含空格、中文。不需要 OpenSSL，也不要求 32 位。
 - `SHOW_IMAGE_CONTENT`：先保持 `true` 就行。
+
+保留 `MCP_TOKEN` 外层的双引号。只在 `.env` 中，把 key 里的每个反斜杠 `\` 写成 `\\`、双引号 `"` 写成 `\"`、美元符号 `$` 写成 `$$`；单引号等其他符号原样保留。例如：
+
+```dotenv
+# key 是 my$cat 时：
+MCP_TOKEN="my$$cat"
+# key 是 cat's-key 时：
+MCP_TOKEN="cat's-key"
+```
+
+这些是不同 key 的示例，`.env` 只保留一行 `MCP_TOKEN`。客户端填写原始 key（例如 `my$cat`），不加外层引号，也不加转义字符。上述规则用于 Docker Compose 的 `.env`，不要把这一行当作 shell 命令执行。参见 [Docker Compose 插值规则](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/#env-file-syntax)。
 
 用 nano 时，按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
 
