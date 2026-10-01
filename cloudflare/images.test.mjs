@@ -35,12 +35,91 @@ function chunk(type, payload) {
   bytes.writeUInt32BE((crc ^ 0xffffffff) >>> 0, bytes.length - 4);
   return bytes;
 }
-function compressedPng(width, height) {
+function compressedPng(width, height, inflatedSize = (width + 1) * height) {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8;
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.alloc((width + 1) * height))), chunk('IEND', Buffer.alloc(0))]);
+    chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.alloc(inflatedSize))), chunk('IEND', Buffer.alloc(0))]);
 }
+
+function rewriteChunks(bytes, rewrite) {
+  const chunks = [bytes.subarray(0, 8)];
+  for (let offset = 8; offset < bytes.length;) {
+    const end = offset + bytes.readUInt32BE(offset) + 12;
+    const type = bytes.toString('latin1', offset + 4, offset + 8);
+    chunks.push(...rewrite(type, bytes.subarray(offset + 8, end - 4)));
+    offset = end;
+  }
+  return Buffer.concat(chunks);
+}
+
+test('tiny PNG canvases reject excess inflated data, including split IDAT and APNG fdAT', async () => {
+  for (const size of [3, 64 * 1024]) {
+    const png = compressedPng(1, 1, size); // a valid 1x1 grayscale image needs exactly two bytes
+    assert.ok(png.length < 64 * 1024);
+    await assert.rejects(validateImage(png), /无法读取图片/);
+    const split = rewriteChunks(png, (type, payload) => type === 'IDAT'
+      ? [chunk(type, payload.subarray(0, 5)), chunk(type, payload.subarray(5))] : [chunk(type, payload)]);
+    await assert.rejects(validateImage(split), /无法读取图片/);
+  }
+  const apng = Buffer.from(fixtures.find(x => x.name === 'apng').base64, 'base64');
+  const oversizedFrame = rewriteChunks(apng, (type, payload) => [chunk(type, type === 'fdAT'
+    ? Buffer.concat([payload.subarray(0, 4), deflateSync(Buffer.alloc(64 * 1024))]) : payload)]);
+  await assert.rejects(validateImage(oversizedFrame), /无法读取图片/);
+  assert.equal((await validateImage(compressedPng(1, 1))).width, 1);
+});
+
+test('PNG bounds retain packed, 16-bit, Adam7 and separate-default APNG images', async () => {
+  // Exact scanline sizes for 9x5 images, including filter bytes and row padding.
+  for (const [depth, color, interlace, size] of [[1, 0, 0, 15], [4, 3, 0, 30], [16, 2, 0, 275],
+    [16, 4, 0, 185], [16, 6, 0, 365], [8, 2, 1, 146], [16, 6, 1, 371]]) {
+    const png = rewriteChunks(compressedPng(9, 5, size), (type, payload) => {
+      if (type !== 'IHDR') return [chunk(type, payload)];
+      const header = Buffer.from(payload); header[8] = depth; header[9] = color; header[12] = interlace;
+      return [chunk(type, header), ...(color === 3 ? [chunk('PLTE', Buffer.alloc(48))] : [])];
+    });
+    assert.equal((await validateImage(png)).width, 9, `${depth}/${color}/${interlace}`);
+  }
+  const apng = Buffer.from(fixtures.find(x => x.name === 'apng').base64, 'base64');
+  const separate = rewriteChunks(apng, (type, payload) => {
+    const copy = Buffer.from(payload);
+    if (type === 'acTL') copy.writeUInt32BE(1);
+    if (type === 'fcTL' && copy.readUInt32BE(0) === 0) return [];
+    if (type === 'fcTL' || type === 'fdAT') copy.writeUInt32BE(copy.readUInt32BE(0) - 1);
+    return [chunk(type, copy)];
+  });
+  assert.equal((await validateImage(separate)).width, 13);
+});
+
+test('PNG validation ignores compressed metadata and rejects header/stream bypasses', async () => {
+  const png = compressedPng(1, 1);
+  const profile = Buffer.concat([Buffer.from('profile\0\0'), deflateSync(Buffer.alloc(64 * 1024))]);
+  const withProfile = rewriteChunks(png, (type, payload) => [chunk(type, payload), ...(type === 'IHDR' ? [chunk('iCCP', profile)] : [])]);
+  assert.equal((await validateImage(withProfile)).width, 1);
+  const duplicate = rewriteChunks(png, (type, payload) => [chunk(type, payload), ...(type === 'IHDR' ? [chunk(type, payload)] : [])]);
+  await assert.rejects(validateImage(duplicate), /无法读取图片/);
+  const trailing = rewriteChunks(png, (type, payload) => [chunk(type, type === 'IDAT'
+    ? Buffer.concat([payload, deflateSync(Buffer.alloc(1024))]) : payload)]);
+  await assert.rejects(validateImage(trailing), /无法读取图片/);
+  await assert.rejects(validateImage(compressedPng(1, 1, 1)), /无法读取图片/);
+});
+
+test('PNG palette and transparency chunks are unique and bounded', async () => {
+  const indexed = rewriteChunks(compressedPng(1, 1), (type, payload) => {
+    if (type !== 'IHDR') return [chunk(type, payload)];
+    const header = Buffer.from(payload); header[9] = 3;
+    return [chunk(type, header), chunk('PLTE', Buffer.alloc(6)), chunk('tRNS', Buffer.from([0, 255]))];
+  });
+  assert.equal((await validateImage(indexed)).width, 1);
+  for (const repeated of ['PLTE', 'tRNS']) {
+    const duplicate = rewriteChunks(indexed, (type, payload) => type === repeated
+      ? [chunk(type, payload), chunk(type, payload)] : [chunk(type, payload)]);
+    await assert.rejects(validateImage(duplicate), /无法读取图片/);
+  }
+  const tooManyAlphaValues = rewriteChunks(indexed, (type, payload) => [chunk(type,
+    type === 'tRNS' ? Buffer.alloc(3) : payload)]);
+  await assert.rejects(validateImage(tooManyAlphaValues), /无法读取图片/);
+});
 
 test('all existing PNG, JPEG, GIF, WebP and animation fixtures remain valid', async () => {
   for (const fixture of fixtures) {
@@ -52,7 +131,7 @@ test('all existing PNG, JPEG, GIF, WebP and animation fixtures remain valid', as
 });
 
 test('highly compressed oversized canvases reject before pixel allocation', async () => {
-  const hugePng = compressedPng(10_000, 10_000);
+  const hugePng = compressedPng(10_000, 10_000, 2); // oversized IHDR alone must reject
   assert.ok(hugePng.length < 1024 * 1024);
   const jpeg = Buffer.from(fixtures.find(x => x.name === 'jpeg').base64, 'base64');
   let sof = false;

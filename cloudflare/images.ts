@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { inflateSync } from 'node:zlib';
 import jpeg from 'jpeg-js';
 import { decode as decodePNG } from 'fast-png';
 import { GifReader } from 'omggif';
@@ -32,21 +33,51 @@ function pngChunk(type: string, data: Uint8Array) {
   chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4);
   return chunk;
 }
+function pngInflatedSize(header: Buffer) {
+  const width = header.readUInt32BE(0), height = header.readUInt32BE(4);
+  budget(width, height, 1);
+  const depth = header[8], color = header[9];
+  const channels = [1, 0, 3, 1, 2, 0, 4][color];
+  check(channels && (color === 0 ? [1, 2, 4, 8, 16] : color === 3 ? [1, 2, 4, 8] : [8, 16]).includes(depth));
+  check(header[10] === 0 && header[11] === 0 && header[12] <= 1);
+  const passes = header[12] === 0 ? [[0, 0, 1, 1]] :
+    [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
+  return passes.reduce((size, [x, y, dx, dy]) => {
+    const w = Math.max(0, Math.ceil((width - x) / dx)), h = Math.max(0, Math.ceil((height - y) / dy));
+    return size + (w && h ? (1 + Math.ceil(w * channels * depth / 8)) * h : 0);
+  }, 0);
+}
+function decodeBoundedPng(signature: Buffer, header: Buffer, shared: Buffer[], parts: Buffer[]) {
+  const expected = pngInflatedSize(header), compressed = Buffer.concat(parts);
+  // Native zlib aborts during inflation; checking the decoded length afterward is too late.
+  // @types/node does not model the `info: true` return shape.
+  const inflated = inflateSync(compressed, { maxOutputLength: expected, info: true }) as unknown as
+    { buffer: Buffer; engine: { bytesWritten: number } };
+  check(inflated.buffer.length === expected && inflated.engine.bytesWritten === compressed.length);
+  // Validate only pixel-bearing chunks. Ancillary metadata (including compressed ICC profiles)
+  // remains in the stored original, but must not trigger an unbounded second inflate here.
+  decodePNG(Buffer.concat([signature, pngChunk('IHDR', header), ...shared,
+    pngChunk('IDAT', compressed), pngChunk('IEND', Buffer.alloc(0))]), { checkCrc: true });
+}
 function png(data: Buffer) {
   check(data.length >= 33 && data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+  check(data.readUInt32BE(8) === 13 && data.toString('latin1', 12, 16) === 'IHDR');
   const width = data.readUInt32BE(16), height = data.readUInt32BE(20);
   budget(width, height, 1);
   const header = data.subarray(16, 29);
   const shared: Buffer[] = [];
+  const defaultParts: Buffer[] = [];
   const frames: { width: number; height: number; parts: Buffer[] }[] = [];
   let declared = 0, sequence = 0, ended = false, idat = false;
+  let paletteEntries = 0, transparency = false;
   for (let offset = 8; offset < data.length;) {
     check(offset + 12 <= data.length);
     const length = data.readUInt32BE(offset), end = offset + length + 12;
     check(end <= data.length);
-    const kind = data.toString('ascii', offset + 4, offset + 8);
+    const kind = data.toString('latin1', offset + 4, offset + 8);
     const payload = data.subarray(offset + 8, end - 4);
     check(crc32(data.subarray(offset + 4, end - 4)) === data.readUInt32BE(end - 4));
+    if (kind === 'IHDR') check(offset === 8 && length === 13);
     if (kind === 'acTL') { check(length === 8 && !idat); declared = payload.readUInt32BE(0); budget(width, height, declared); }
     if (kind === 'fcTL') {
       check(declared && length === 26 && payload.readUInt32BE(0) === sequence++);
@@ -54,10 +85,19 @@ function png(data: Buffer) {
       check(w > 0 && h > 0 && w + payload.readUInt32BE(12) <= width && h + payload.readUInt32BE(16) <= height);
       frames.push({ width: w, height: h, parts: [] });
     }
-    if (kind === 'IDAT') { idat = true; if (frames.length) frames[frames.length - 1].parts.push(pngChunk('IDAT', payload)); }
+    if (kind === 'IDAT') { idat = true; defaultParts.push(payload); if (frames.length) frames[frames.length - 1].parts.push(payload); }
     if (kind === 'fdAT') {
       check(length >= 4 && frames.length && payload.readUInt32BE(0) === sequence++);
-      frames[frames.length - 1].parts.push(pngChunk('IDAT', payload.subarray(4)));
+      frames[frames.length - 1].parts.push(payload.subarray(4));
+    }
+    if (kind === 'PLTE') {
+      check(!idat && !paletteEntries && !transparency && length > 0 && length <= 768 && length % 3 === 0);
+      paletteEntries = length / 3;
+    }
+    if (kind === 'tRNS') {
+      check(!idat && !transparency && (header[9] === 3 ? paletteEntries > 0 && length <= paletteEntries :
+        header[9] === 0 ? length === 2 : header[9] === 2 && length === 6));
+      transparency = true;
     }
     if (kind === 'PLTE' || kind === 'tRNS') shared.push(data.subarray(offset, end));
     if (kind === 'IEND') { check(length === 0); ended = true; break; }
@@ -66,11 +106,11 @@ function png(data: Buffer) {
   check(ended && idat && frames.length === declared);
   // fast-png's decode() processes the default PNG image; APNG frames are
   // reconstructed and decoded one at a time below.
-  decodePNG(data, { checkCrc: true });
+  decodeBoundedPng(data.subarray(0, 8), header, shared, defaultParts);
   for (const frame of frames) {
     check(frame.parts.length);
     const ihdr = Buffer.from(header); ihdr.writeUInt32BE(frame.width, 0); ihdr.writeUInt32BE(frame.height, 4);
-    decodePNG(Buffer.concat([data.subarray(0, 8), pngChunk('IHDR', ihdr), ...shared, ...frame.parts, pngChunk('IEND', Buffer.alloc(0))]), { checkCrc: true });
+    decodeBoundedPng(data.subarray(0, 8), ihdr, shared, frame.parts);
   }
   return { width, height, extension: 'png', mime: 'image/png' };
 }

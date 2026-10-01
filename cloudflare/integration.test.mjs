@@ -24,12 +24,12 @@ function pngChunk(type, payload) {
   bytes.writeUInt32BE((crc ^ 0xffffffff) >>> 0, bytes.length - 4);
   return bytes;
 }
-function compressedPng(width, height) {
+function compressedPng(width, height, inflatedSize = (width + 1) * height) {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width); header.writeUInt32BE(height, 4);
   header[8] = 8; header[9] = 0; // grayscale, one byte per pixel
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(Buffer.alloc((width + 1) * height))), pngChunk('IEND', Buffer.alloc(0))]);
+    pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(Buffer.alloc(inflatedSize))), pngChunk('IEND', Buffer.alloc(0))]);
 }
 function oversizedJpeg() {
   const bytes = Buffer.from(fixtures.find(x => x.name === 'jpeg').base64, 'base64');
@@ -146,8 +146,8 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
       }
     });
     await t.test('highly compressed oversized canvases fail validation without killing the Worker', async () => {
-      const png = compressedPng(10_000, 10_000);
-      assert.ok(png.length < 1024 * 1024); // 100 MP, despite a tiny input
+      const png = compressedPng(10_000, 10_000, 2);
+      assert.ok(png.length < 1024); // Reject a 100 MP header without generating a large pixel buffer.
       const gif = Buffer.from(fixtures.find(x => x.name === 'animated-gif').base64, 'base64');
       gif.writeUInt16LE(10_000, 6); gif.writeUInt16LE(10_000, 8);
       const webp = Buffer.from(fixtures.find(x => x.name === 'animated-webp').base64, 'base64');
@@ -166,6 +166,36 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
       const normal = compressedPng(1024, 1024);
       await call('add', { name: 'compressed-normal', base64_data: normal.toString('base64') });
       assert.equal((await call('get', { name: 'compressed-normal' })).structuredContent.width, 1024);
+    });
+    await t.test('small PNG/APNG canvases reject excess scanline data', async () => {
+      const expanded = deflateSync(Buffer.alloc(64 * 1024));
+      function replaceData(bytes, target) {
+        const chunks = [bytes.subarray(0, 8)];
+        for (let offset = 8; offset < bytes.length;) {
+          const end = offset + bytes.readUInt32BE(offset) + 12;
+          const type = bytes.toString('latin1', offset + 4, offset + 8);
+          const payload = bytes.subarray(offset + 8, end - 4);
+          chunks.push(pngChunk(type, type !== target ? payload : target === 'fdAT'
+            ? Buffer.concat([payload.subarray(0, 4), expanded]) : expanded));
+          offset = end;
+        }
+        return Buffer.concat(chunks);
+      }
+      const tiny = compressedPng(1, 1);
+      const apng = Buffer.from(fixtures.find(x => x.name === 'apng').base64, 'base64');
+      for (const [name, bytes] of [['png-inflate', replaceData(tiny, 'IDAT')], ['apng-inflate', replaceData(apng, 'fdAT')]]) {
+        assert.ok(bytes.length < 1024 * 1024);
+        const result = await call('add', { name, base64_data: bytes.toString('base64') }, true);
+        assert.match(result.content[0].text, /无法读取图片/);
+        assert.equal((await fetch(`${origin}/health`)).status, 200);
+      }
+      // Metadata is retained byte-for-byte, without inflating it during pixel validation.
+      const profile = pngChunk('iCCP', Buffer.concat([Buffer.from('profile\0\0'), expanded]));
+      const withProfile = Buffer.concat([tiny.subarray(0, 33), profile, tiny.subarray(33)]);
+      await call('add', { name: 'png-with-profile', base64_data: withProfile.toString('base64') });
+      assert.equal((await call('get', { name: 'png-with-profile' })).content[1].data, withProfile.toString('base64'));
+      await call('add', { name: 'png-after-inflate-rejection', base64_data: tiny.toString('base64') });
+      assert.equal((await fetch(`${origin}/health`)).status, 200);
     });
     await t.test('OR contains search, full Unicode folding, exact-name priority, paging and aliases', async () => {
       for (const [name, aliases, description] of [['Straße', ['开心', 'ＫＥＬＶＩＮ'], 'first'], ['Other', ['无语', '开心'], 'second'], ['开心', [], 'third']])
