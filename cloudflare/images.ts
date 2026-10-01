@@ -77,6 +77,8 @@ function png(data: Buffer) {
     const kind = data.toString('latin1', offset + 4, offset + 8);
     const payload = data.subarray(offset + 8, end - 4);
     check(crc32(data.subarray(offset + 4, end - 4)) === data.readUInt32BE(end - 4));
+    // An unknown critical chunk cannot be omitted from the pixel validation copy.
+    if ((data[offset + 4] & 0x20) === 0) check(['IHDR', 'PLTE', 'IDAT', 'IEND'].includes(kind));
     if (kind === 'IHDR') check(offset === 8 && length === 13);
     if (kind === 'acTL') { check(length === 8 && !idat); declared = payload.readUInt32BE(0); budget(width, height, declared); }
     if (kind === 'fcTL') {

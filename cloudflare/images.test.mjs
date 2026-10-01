@@ -96,6 +96,10 @@ test('PNG validation ignores compressed metadata and rejects header/stream bypas
   const profile = Buffer.concat([Buffer.from('profile\0\0'), deflateSync(Buffer.alloc(64 * 1024))]);
   const withProfile = rewriteChunks(png, (type, payload) => [chunk(type, payload), ...(type === 'IHDR' ? [chunk('iCCP', profile)] : [])]);
   assert.equal((await validateImage(withProfile)).width, 1);
+  const withUnknown = (name) => rewriteChunks(png, (type, payload) =>
+    [chunk(type, payload), ...(type === 'IHDR' ? [chunk(name, Buffer.from([1]))] : [])]);
+  await assert.rejects(validateImage(withUnknown('ABCD')), /无法读取图片/);
+  assert.equal((await validateImage(withUnknown('abCd'))).width, 1); // ancillary chunks may be ignored
   const duplicate = rewriteChunks(png, (type, payload) => [chunk(type, payload), ...(type === 'IHDR' ? [chunk(type, payload)] : [])]);
   await assert.rejects(validateImage(duplicate), /无法读取图片/);
   const trailing = rewriteChunks(png, (type, payload) => [chunk(type, type === 'IDAT'
