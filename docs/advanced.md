@@ -141,6 +141,7 @@ npm run dev
 
 ```bash
 npm run test:ui
+npm run test:images
 npm run test:cloudflare
 npm run check
 npm run build:worker
@@ -152,7 +153,9 @@ npm run build:worker
 
 Python/Docker 把原图和元数据放在 SQLite；Cloudflare 用 D1 保存名字、别名和描述，R2 保存原图。图片验证后保留原始字节，不在服务端缩图。界面的 150px 只是显示尺寸。
 
-支持 PNG、JPEG、GIF、WebP，单图最多 10 MiB，最多 500 帧、累计 1 亿像素。Cloudflare 的 CPU、内存和存储额度还受套餐限制，大图或长动图可能无法在免费 Worker 中完成处理。
+支持 PNG、JPEG、GIF、WebP，单图最多 10 MiB，最多 500 帧、累计 1 亿像素。Cloudflare 还限制单帧画布最多 200 万像素，在解码前检查；PNG 扫描行的解压字节数受对应图像或帧的尺寸与格式限制，附属元数据只校验 CRC，原样保存，不解压内容。
+
+Workers 每个 isolate 共享的 128 MB 内存还需容纳 JS、WASM、输入和并发请求，不能保证极端并发或异常文件一定不会触发限制。CPU、内存和存储额度受套餐限制，大图或长动图可能无法在免费 Worker 中完成处理；详见 [Workers 运行限制](https://developers.cloudflare.com/workers/platform/limits/)。
 
 搜索是文字包含匹配，忽略大小写；空格分隔的关键词命中任意一个就返回，结果去重后分页。其他工具按准确图片名字操作。
 

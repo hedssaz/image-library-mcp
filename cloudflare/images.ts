@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { inflateSync } from 'node:zlib';
 import jpeg from 'jpeg-js';
 import { decode as decodePNG } from 'fast-png';
 import { GifReader } from 'omggif';
@@ -8,8 +9,15 @@ import webpWasm from '@jsquash/webp/codec/dec/webp_dec.wasm';
 const invalid = () => new Error('无法读取图片，文件可能损坏或尺寸过大。');
 function check(ok: unknown): asserts ok { if (!ok) throw invalid(); }
 const text = (bytes: Uint8Array, start: number, end: number) => String.fromCharCode(...bytes.subarray(start, end));
+// Workers share 128 MB per isolate across the JS heap, WASM and concurrent requests.
+// A single decode can hold several expanded copies (PNG scanlines/frames, JPEG
+// components, GIF canvas + indices, or libwebp's WASM + JS output). Keep one
+// canvas at <= 2 MP (8 MiB RGBA) and retain the separate animation work cap.
+const MAX_CANVAS_PIXELS = 2_000_000;
+const MAX_TOTAL_PIXELS = 100_000_000;
 function budget(width: number, height: number, frames: number) {
-  check(width > 0 && height > 0 && frames > 0 && frames <= 500 && width * height * frames <= 100_000_000);
+  check(width > 0 && height > 0 && frames > 0 && frames <= 500 &&
+    width * height <= MAX_CANVAS_PIXELS && width * height * frames <= MAX_TOTAL_PIXELS);
 }
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff;
@@ -25,21 +33,53 @@ function pngChunk(type: string, data: Uint8Array) {
   chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4);
   return chunk;
 }
+function pngInflatedSize(header: Buffer) {
+  const width = header.readUInt32BE(0), height = header.readUInt32BE(4);
+  budget(width, height, 1);
+  const depth = header[8], color = header[9];
+  const channels = [1, 0, 3, 1, 2, 0, 4][color];
+  check(channels && (color === 0 ? [1, 2, 4, 8, 16] : color === 3 ? [1, 2, 4, 8] : [8, 16]).includes(depth));
+  check(header[10] === 0 && header[11] === 0 && header[12] <= 1);
+  const passes = header[12] === 0 ? [[0, 0, 1, 1]] :
+    [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
+  return passes.reduce((size, [x, y, dx, dy]) => {
+    const w = Math.max(0, Math.ceil((width - x) / dx)), h = Math.max(0, Math.ceil((height - y) / dy));
+    return size + (w && h ? (1 + Math.ceil(w * channels * depth / 8)) * h : 0);
+  }, 0);
+}
+function decodeBoundedPng(signature: Buffer, header: Buffer, shared: Buffer[], parts: Buffer[]) {
+  const expected = pngInflatedSize(header), compressed = Buffer.concat(parts);
+  // Native zlib aborts during inflation; checking the decoded length afterward is too late.
+  // @types/node does not model the `info: true` return shape.
+  const inflated = inflateSync(compressed, { maxOutputLength: expected, info: true }) as unknown as
+    { buffer: Buffer; engine: { bytesWritten: number } };
+  check(inflated.buffer.length === expected && inflated.engine.bytesWritten === compressed.length);
+  // Validate only pixel-bearing chunks. Ancillary metadata (including compressed ICC profiles)
+  // remains in the stored original, but must not trigger an unbounded second inflate here.
+  decodePNG(Buffer.concat([signature, pngChunk('IHDR', header), ...shared,
+    pngChunk('IDAT', compressed), pngChunk('IEND', Buffer.alloc(0))]), { checkCrc: true });
+}
 function png(data: Buffer) {
   check(data.length >= 33 && data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+  check(data.readUInt32BE(8) === 13 && data.toString('latin1', 12, 16) === 'IHDR');
   const width = data.readUInt32BE(16), height = data.readUInt32BE(20);
   budget(width, height, 1);
   const header = data.subarray(16, 29);
   const shared: Buffer[] = [];
+  const defaultParts: Buffer[] = [];
   const frames: { width: number; height: number; parts: Buffer[] }[] = [];
   let declared = 0, sequence = 0, ended = false, idat = false;
+  let paletteEntries = 0, transparency = false;
   for (let offset = 8; offset < data.length;) {
     check(offset + 12 <= data.length);
     const length = data.readUInt32BE(offset), end = offset + length + 12;
     check(end <= data.length);
-    const kind = data.toString('ascii', offset + 4, offset + 8);
+    const kind = data.toString('latin1', offset + 4, offset + 8);
     const payload = data.subarray(offset + 8, end - 4);
     check(crc32(data.subarray(offset + 4, end - 4)) === data.readUInt32BE(end - 4));
+    // An unknown critical chunk cannot be omitted from the pixel validation copy.
+    if ((data[offset + 4] & 0x20) === 0) check(['IHDR', 'PLTE', 'IDAT', 'IEND'].includes(kind));
+    if (kind === 'IHDR') check(offset === 8 && length === 13);
     if (kind === 'acTL') { check(length === 8 && !idat); declared = payload.readUInt32BE(0); budget(width, height, declared); }
     if (kind === 'fcTL') {
       check(declared && length === 26 && payload.readUInt32BE(0) === sequence++);
@@ -47,21 +87,32 @@ function png(data: Buffer) {
       check(w > 0 && h > 0 && w + payload.readUInt32BE(12) <= width && h + payload.readUInt32BE(16) <= height);
       frames.push({ width: w, height: h, parts: [] });
     }
-    if (kind === 'IDAT') { idat = true; if (frames.length) frames[frames.length - 1].parts.push(pngChunk('IDAT', payload)); }
+    if (kind === 'IDAT') { idat = true; defaultParts.push(payload); if (frames.length) frames[frames.length - 1].parts.push(payload); }
     if (kind === 'fdAT') {
       check(length >= 4 && frames.length && payload.readUInt32BE(0) === sequence++);
-      frames[frames.length - 1].parts.push(pngChunk('IDAT', payload.subarray(4)));
+      frames[frames.length - 1].parts.push(payload.subarray(4));
+    }
+    if (kind === 'PLTE') {
+      check(!idat && !paletteEntries && !transparency && length > 0 && length <= 768 && length % 3 === 0);
+      paletteEntries = length / 3;
+    }
+    if (kind === 'tRNS') {
+      check(!idat && !transparency && (header[9] === 3 ? paletteEntries > 0 && length <= paletteEntries :
+        header[9] === 0 ? length === 2 : header[9] === 2 && length === 6));
+      transparency = true;
     }
     if (kind === 'PLTE' || kind === 'tRNS') shared.push(data.subarray(offset, end));
     if (kind === 'IEND') { check(length === 0); ended = true; break; }
     offset = end;
   }
   check(ended && idat && frames.length === declared);
-  decodePNG(data, { checkCrc: true });
+  // fast-png's decode() processes the default PNG image; APNG frames are
+  // reconstructed and decoded one at a time below.
+  decodeBoundedPng(data.subarray(0, 8), header, shared, defaultParts);
   for (const frame of frames) {
     check(frame.parts.length);
     const ihdr = Buffer.from(header); ihdr.writeUInt32BE(frame.width, 0); ihdr.writeUInt32BE(frame.height, 4);
-    decodePNG(Buffer.concat([data.subarray(0, 8), pngChunk('IHDR', ihdr), ...shared, ...frame.parts, pngChunk('IEND', Buffer.alloc(0))]), { checkCrc: true });
+    decodeBoundedPng(data.subarray(0, 8), ihdr, shared, frame.parts);
   }
   return { width, height, extension: 'png', mime: 'image/png' };
 }
@@ -110,6 +161,32 @@ function gif(data: Buffer) {
 }
 let webpReady: Promise<void> | undefined;
 const u24 = (data: Buffer, offset: number) => data.readUIntLE(offset, 3);
+function webpBitstreamSize(kind: string, data: Buffer, start: number, length: number) {
+  if (kind === 'VP8 ') {
+    check(length >= 10 && text(data, start + 3, start + 6) === '\x9d\x01\x2a');
+    return { width: data.readUInt16LE(start + 6) & 0x3fff, height: data.readUInt16LE(start + 8) & 0x3fff };
+  }
+  check(kind === 'VP8L' && length >= 5 && data[start] === 0x2f);
+  const bits = data.readUInt32LE(start + 1);
+  return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+}
+function checkWebpFrame(data: Buffer, width: number, height: number) {
+  let found = false;
+  for (let offset = 0; offset < data.length;) {
+    check(offset + 8 <= data.length);
+    const kind = text(data, offset, offset + 4), length = data.readUInt32LE(offset + 4);
+    const start = offset + 8, end = start + length;
+    check(end + length % 2 <= data.length);
+    if (kind === 'VP8 ' || kind === 'VP8L') {
+      const size = webpBitstreamSize(kind, data, start, length);
+      budget(size.width, size.height, 1);
+      check(size.width === width && size.height === height);
+      found = true;
+    }
+    offset = end + length % 2;
+  }
+  check(found);
+}
 async function webp(data: Buffer) {
   check(data.length >= 20 && text(data, 0, 4) === 'RIFF' && text(data, 8, 12) === 'WEBP');
   check(data.readUInt32LE(4) + 8 === data.length);
@@ -123,17 +200,17 @@ async function webp(data: Buffer) {
     if (kind === 'VP8X') {
       check(length === 10); animated = Boolean(data[start] & 2);
       width = u24(data, start + 4) + 1; height = u24(data, start + 7) + 1; budget(width, height, 1);
-    } else if (kind === 'VP8 ' && !width) {
-      check(length >= 10 && text(data, start + 3, start + 6) === '\x9d\x01\x2a');
-      width = data.readUInt16LE(start + 6) & 0x3fff; height = data.readUInt16LE(start + 8) & 0x3fff;
-    } else if (kind === 'VP8L' && !width) {
-      check(length >= 5 && data[start] === 0x2f);
-      const bits = data.readUInt32LE(start + 1); width = (bits & 0x3fff) + 1; height = ((bits >>> 14) & 0x3fff) + 1;
+    } else if (kind === 'VP8 ' || kind === 'VP8L') {
+      const size = webpBitstreamSize(kind, data, start, length);
+      budget(size.width, size.height, 1);
+      if (width) check(size.width === width && size.height === height);
+      else { width = size.width; height = size.height; }
     } else if (kind === 'ANMF') {
       check(animated && length >= 16);
       const w = u24(data, start + 6) + 1, h = u24(data, start + 9) + 1;
       check(u24(data, start) * 2 + w <= width && u24(data, start + 3) * 2 + h <= height);
       const chunks = data.subarray(start + 16, end);
+      checkWebpFrame(chunks, w, h);
       // Convert each animation frame into a standalone WebP for libwebp's full pixel decode.
       const extended = Buffer.alloc(18); extended.write('VP8X'); extended.writeUInt32LE(10, 4);
       extended[8] = 0x10; extended.writeUIntLE(w - 1, 12, 3); extended.writeUIntLE(h - 1, 15, 3);
@@ -163,7 +240,10 @@ export async function validateImage(bytes: Uint8Array) {
     if (text(data, 0, 3) === 'GIF') return gif(data);
     if (text(data, 0, 4) === 'RIFF') return await webp(data);
     if (data[0] === 0xff && data[1] === 0xd8) {
-      const result = jpeg.decode(data, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: 100, maxMemoryUsageInMB: 96 });
+      // jpeg-js checks maxResolutionInMP while parsing SOF, before allocating
+      // component planes or the RGBA output. The memory cap also covers its
+      // internal allocations, which can exceed one RGBA canvas.
+      const result = jpeg.decode(data, { useTArray: true, tolerantDecoding: false, maxResolutionInMP: MAX_CANVAS_PIXELS / 1_000_000, maxMemoryUsageInMB: 48 });
       budget(result.width, result.height, 1);
       return { width: result.width, height: result.height, extension: 'jpg', mime: 'image/jpeg' };
     }
