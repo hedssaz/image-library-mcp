@@ -12,7 +12,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { GifReader } from 'omggif';
 import { build } from 'esbuild';
 const fixtures = JSON.parse(await readFile(new URL('./fixtures.json', import.meta.url)));
-const token = 'local-integration-token-not-a-secret-123456789';
+const token = 'my-cat-2026';
 const root = new URL('../', import.meta.url).pathname;
 const wrangler = join(root, 'node_modules/wrangler/bin/wrangler.js');
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-03-26' };
@@ -45,9 +45,9 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
   source.listen(0, '127.0.0.1'); await once(source, 'listening');
   const sourceURL = `http://127.0.0.1:${source.address().port}`;
   async function stop() { if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; } }
-  async function start(show) {
+  async function start(show, configuredToken = token) {
     await stop(); logs = ''; const p = await port(); origin = `http://127.0.0.1:${p}`;
-    const args = ['dev', '--local', '--ip', '127.0.0.1', '--port', String(p), '--persist-to', state, '--var', `MCP_TOKEN:${token}`];
+    const args = ['dev', '--local', '--ip', '127.0.0.1', '--port', String(p), '--inspector-port', '0', '--persist-to', state, '--var', `MCP_TOKEN:${configuredToken}`];
     if (show !== undefined) args.push('--var', `SHOW_IMAGE_CONTENT:${show}`);
     child = spawn(process.execPath, [wrangler, ...args], { cwd: root, env });
     child.stdout.on('data', b => logs += b); child.stderr.on('data', b => logs += b);
@@ -72,6 +72,18 @@ test('Cloudflare MCP integration (real workerd + persisted D1/R2)', { timeout: 1
   }
   try {
     await command(['d1', 'migrations', 'apply', 'DB', '--local', '--persist-to', state], env);
+    await t.test('memorable and existing keys work; empty and unsupported keys are rejected', async () => {
+      for (const key of ['a', 'local-integration-token-not-a-secret-123456789']) {
+        await start(undefined, key);
+        assert.equal((await fetch(`${origin}/mcp`, { headers: { Authorization: 'Bearer wrong' } })).status, 401);
+        const result = await rpc('tools/list', {}, { headers: { ...headers, Authorization: `Bearer ${key}` } });
+        assert.equal(result.tools.length, 6);
+      }
+      for (const key of ['', 'two words', '中文']) {
+        await start(undefined, key);
+        assert.equal((await fetch(`${origin}/mcp`)).status, 503);
+      }
+    });
     await start();
     await t.test('authentication precedence, protocol, schemas and card resource', async () => {
       assert.equal((await fetch(`${origin}/mcp`)).status, 401);

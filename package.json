@@ -35,16 +35,16 @@
   "cloudflare": {
     "bindings": {
       "MCP_TOKEN": {
-        "description": "Required: generate your own ASCII token (at least 32 characters), e.g. `openssl rand -hex 32`. Used as the MCP Bearer token."
+        "description": "自己填写一个好记的 key，例如 my-cat-2026。连接 MCP 时填同一个值；不要求长度，不要留空或含空格、中文。这不是 Cloudflare API token。"
       },
       "SHOW_IMAGE_CONTENT": {
-        "description": "`true` returns original ImageContent with show_image; `false` returns only card data and links. get always returns the original."
+        "description": "保持 true 即可：展示表情包时也把原图交给 AI。false 只返回卡片数据和链接；get 始终返回原图。"
       },
       "DB": {
-        "description": "D1 database for image names, aliases, descriptions and dimensions. Created automatically; keep the default deploy command to apply migrations."
+        "description": "保存图片名字、别名和描述的数据库。让向导自动创建，保持默认部署命令即可。"
       },
       "IMAGES": {
-        "description": "R2 bucket for original image bytes. Enable R2 in your own account before deploying; review Cloudflare billing terms."
+        "description": "保存原始图片的仓库。先在 Cloudflare 账户中开通 R2，再让向导创建；开通可能需要填写付款资料。"
       }
     }
   },

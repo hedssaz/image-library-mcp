@@ -76,8 +76,8 @@ export default {
       return new Response('body' in object ? (object as R2ObjectBody).body : null, { headers });
     }
     if (url.pathname.replace(/\/+$/, '') !== '/mcp') return new Response(null, { status: 404 });
-    if (!env.MCP_TOKEN || env.MCP_TOKEN.length < 32 || /[^\x21-\x7e]/.test(env.MCP_TOKEN)) {
-      return Response.json({ error: '请设置至少 32 位、不含空白的 ASCII MCP_TOKEN secret。' }, { status: 503 });
+    if (!env.MCP_TOKEN || /[^\x21-\x7e]/.test(env.MCP_TOKEN)) {
+      return Response.json({ error: '请填写自己好记的 MCP_TOKEN key，使用英文字母、数字或英文符号，不要留空或含空格、中文。' }, { status: 503 });
     }
     const authorization = request.headers.get('Authorization');
     const token = authorization !== null ? (/^Bearer (.*)$/i.exec(authorization)?.[1] ?? '') : (url.searchParams.get('token') ?? '');

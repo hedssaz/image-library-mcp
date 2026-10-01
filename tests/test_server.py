@@ -14,7 +14,7 @@ from PIL import Image
 
 import server
 
-TOKEN = "a-test-secret-with-at-least-32-characters"
+TOKEN = "my-cat-2026"
 ORIGIN = "https://example.test"
 IMAGE_ORIGIN = ORIGIN
 
@@ -496,11 +496,26 @@ def test_concurrent_alias_updates_and_duplicate_names(tmp_path):
 
 @pytest.mark.parametrize("origin,token", [
     ("", TOKEN), ("https://example.com/path", TOKEN), ("https://example.com?x=1", TOKEN),
-    ("https://user@example.com", TOKEN), (ORIGIN, ""), (ORIGIN, "short"),
+    ("https://user@example.com", TOKEN), (ORIGIN, ""), (ORIGIN, "two words"),
+    (ORIGIN, "中文"), (ORIGIN, "\n"), (ORIGIN, "\x00"), (ORIGIN, "\x7f"),
 ])
 def test_invalid_startup_settings(tmp_path, origin, token):
     with pytest.raises(ValueError):
         server.build_app(ORIGIN + "/mcp", origin, token, tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["a", "my-cat-2026", "a-test-secret-with-at-least-32-characters"])
+async def test_memorable_and_existing_keys_authenticate(tmp_path, token):
+    app = server.build_app(ORIGIN + "/mcp", IMAGE_ORIGIN, token, tmp_path)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
+            assert (await http.post(ORIGIN + "/mcp", json={},
+                                   headers={"Authorization": "Bearer wrong"})).status_code == 401
+            async with streamable_http_client(ORIGIN + "/mcp?token=" + token, http_client=http) as (read, write, _):
+                async with ClientSession(read, write) as client:
+                    await client.initialize()
+                    assert len((await client.list_tools()).tools) == 6
 
 
 @pytest.mark.asyncio

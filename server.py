@@ -374,8 +374,8 @@ def build_app(mcp_url: str, public_base_url: str, token: str, data_dir: Path,
         or image_origin.user is not None
     ):
         raise ValueError("PUBLIC_BASE_URL 必须是完整域名地址，不含路径，例如 https://example.com。")
-    if len(token) < 32 or not token.isascii() or any(c.isspace() for c in token):
-        raise ValueError("MCP_TOKEN 必须是至少 32 位、不含空白的 ASCII 随机令牌。")
+    if not token or any(not ("!" <= c <= "~") for c in token):
+        raise ValueError("MCP_TOKEN 不能为空，请填写自己好记的 key，使用英文字母、数字或英文符号，不要含空格或中文。")
     library = ImageLibrary(data_dir, str(image_origin).rstrip("/"))
     viewer_html = Path(__file__).with_name("viewer.html").read_text(encoding="utf-8")
     image_content_note = (
