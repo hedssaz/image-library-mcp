@@ -129,12 +129,27 @@ npm ci
 cp .dev.vars.example .dev.vars
 ```
 
-编辑 `.dev.vars`，填写自己的 key，然后执行：
+编辑 `.dev.vars`，在单引号内填写原始 key，例如：
+
+```dotenv
+MCP_TOKEN='#cat'
+```
+
+保留外层单引号，否则 `#` 会开始注释。单引号内的 `$`、双引号和反斜杠原样填写，不要套用 Docker `.env` 的转义规则。客户端填写原始 key，不加外层引号。
+
+然后执行：
 
 ```bash
 npm run build
 npm run db:local
 npm run dev
+```
+
+如果 key 本身含单引号，保留 `.dev.vars` 中的 `MCP_TOKEN=''`，完成上述 `build` 和 `db:local` 后，用下面两行代替 `npm run dev`。第一行执行后原样粘贴 key 并回车，第二行会将该值传给 Wrangler，覆盖 `.dev.vars` 的空值；Bash 和 Zsh 均可使用：
+
+```bash
+read -r MCP_TOKEN
+npm run dev -- --var "MCP_TOKEN:$MCP_TOKEN"
 ```
 
 本地地址以终端输出为准，通常是 `http://127.0.0.1:8787/mcp`。本地 D1/R2 数据位于 `.wrangler/state`，不会访问线上图库。

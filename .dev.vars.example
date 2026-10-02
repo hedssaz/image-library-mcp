@@ -1,2 +1,3 @@
 # 自己填一个好记的 key，例如 my-cat-2026；不要求长度，不要留空或含空格、中文。
-MCP_TOKEN=
+# 保留单引号；含单引号的 key 按 docs/advanced.md 的本地输入方式启动。
+MCP_TOKEN=''
